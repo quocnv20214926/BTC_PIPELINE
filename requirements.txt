@@ -1,0 +1,4 @@
+confluent-kafka==2.8.0
+psycopg[binary]==3.2.6
+httpx==0.28.1
+websockets==15.0.1
