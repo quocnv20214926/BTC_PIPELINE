@@ -13,7 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 
 BASE = 'https://fapi.binance.com'
-STEPS = {'15m': 900000, '1h': 3600000}
+STEPS = {'1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000}
 FIELDS = ['open_time_ms', 'open_time_utc', 'open', 'high', 'low', 'close', 'volume']
 
 def get(path, params):

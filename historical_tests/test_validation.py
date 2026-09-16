@@ -35,7 +35,7 @@ class ResumeTests(unittest.TestCase):
         start=1577836800000
         end=start+3600000
         def fake_get(path, params):
-            step=900000 if params['interval']=='15m' else 3600000
+            step={'1m':60000,'5m':300000,'15m':900000,'1h':3600000}[params['interval']]
             return [[t,'100','110','90','105','1',t+step-1] for t in range(params['startTime'],params['endTime']+1,step)]
         with TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
             with patch('collect_historical.get',side_effect=fake_get), patch('collect_historical.time.sleep'):
@@ -54,14 +54,14 @@ class TotalsTests(unittest.TestCase):
         import io
         start=1580511600000  # 2020-01-31 23:00 UTC
         def fake_get(path, params):
-            step=900000 if params['interval']=='15m' else 3600000
+            step={'1m':60000,'5m':300000,'15m':900000,'1h':3600000}[params['interval']]
             return [[t,'100','110','90','105','1',t+step-1] for t in range(params['startTime'],params['endTime']+1,step)]
         with TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), patch('collect_historical.get',side_effect=fake_get), patch('collect_historical.time.sleep'):
             folder=Path(folder)
             collect(folder,start,start+3600000)
             for _ in range(2):
                 collect(folder,start,start+7200000)
-                for tf, expected in [('15m',8),('1h',2)]:
+                for tf, expected in [('1m',120),('5m',24),('15m',8),('1h',2)]:
                     with (folder/('BTCUSDT_'+tf+'_all.csv')).open() as f:
                         rows=list(csv.DictReader(f))
                     self.assertEqual(len(rows),expected)

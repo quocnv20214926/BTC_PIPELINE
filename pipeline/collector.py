@@ -8,7 +8,7 @@ import time
 import httpx
 from websockets.asyncio.client import connect as ws_connect
 
-from .core import INTERVALS, INSTRUMENT, RAW, candle, metric, now_ms, validate
+from .core import INTERVALS, KINDS_BY_TIMEFRAME, INSTRUMENT, RAW, candle, metric, now_ms, validate
 from .kafka_io import Sender
 from .storage import connect, heartbeat
 
@@ -18,7 +18,8 @@ log = logging.getLogger(__name__)
 # BASE là máy chủ Binance Futures; WS có thể được ghi đè khi chạy trong môi
 # trường kiểm thử hoặc khi cần kết nối tới một endpoint WebSocket khác.
 BASE = 'https://fapi.binance.com'
-WS = os.getenv('BINANCE_WS_URL', 'wss://fstream.binance.com/market/stream?streams=btcusdt@kline_15m/btcusdt@kline_1h')
+WS = os.getenv('BINANCE_WS_URL', 'wss://fstream.binance.com/market/stream?streams=' +
+                '/'.join(f'btcusdt@kline_{tf}' for tf in INTERVALS))
 # Ánh xạ tên loại dữ liệu nội bộ sang endpoint tương ứng của Binance. Candle
 # dùng endpoint klines, còn ratio/taker là các endpoint thống kê futures.
 PATHS = {'candle':'/fapi/v1/klines','ratio':'/futures/data/globalLongShortAccountRatio','taker':'/futures/data/takerlongshortRatio'}
@@ -117,7 +118,9 @@ async def poll_loop(once=False):
                     counts = {}
                     for tf, step in INTERVALS.items():
                         end = server_now // step * step
-                        for kind in PATHS:
+                        # Không gọi endpoint metric với period không được Binance
+                        # hỗ trợ (đặc biệt là 1m).
+                        for kind in KINDS_BY_TIMEFRAME[tf]:
                             if first:
                                 # Lần chạy đầu lấy toàn bộ cửa sổ backfill, căn
                                 # start theo biên của timeframe hiện tại.

@@ -1,7 +1,7 @@
 import os
 from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient, NewTopic
-from .core import RAW, READY, DLQ, canonical
+from .core import RAW, READY, DLQ, MODEL_SIGNALS, ANOMALY_SIGNALS, DECISIONS, EXECUTIONS, canonical
 
 
 def bootstrap():
@@ -16,7 +16,9 @@ def init_topics():
     admin = AdminClient({'bootstrap.servers': bootstrap()})
     current = admin.list_topics(timeout=20).topics
     topics = [NewTopic(t, num_partitions=1, replication_factor=1,
-                       config={'retention.ms':str(7 * 86400_000)}) for t in (RAW, READY, DLQ) if t not in current]
+                       config={'retention.ms':str(7 * 86400_000)})
+              for t in (RAW, READY, DLQ, MODEL_SIGNALS, ANOMALY_SIGNALS, DECISIONS, EXECUTIONS)
+              if t not in current]
     if not topics:
         print('all required topics already exist', flush=True)
         return

@@ -6,7 +6,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from .core import INSTRUMENT, INTERVALS, VERSION, READY, canonical, complete_windows, window_id
+from .core import INSTRUMENT, INTERVALS, KINDS_BY_TIMEFRAME, VERSION, READY, canonical, complete_windows, window_id
 
 
 def connect():
@@ -55,23 +55,31 @@ def save_event(db, e):
 
 
 def build_windows(db, lookback):
-    # Join candle, ratio và taker theo cùng instrument/timeframe/period. Chỉ
-    # những period có đủ cả ba nguồn mới đủ điều kiện tạo feature window.
+    # Mỗi timeframe chỉ join các nguồn mà Binance thực sự hỗ trợ. 1m dùng
+    # candle; từ 5m trở lên dùng candle + ratio + taker như pipeline cũ.
     if lookback < 2:
         raise ValueError('LOOKBACK must be at least 2')
     created = 0
     for tf, step in INTERVALS.items():
         # SQL đã sắp xếp theo thời gian; complete_windows tiếp tục loại các
         # đoạn bị đứt timestamp trước khi tính feature set.
-        rows = db.execute('''SELECT c.period_start_ms,
-            jsonb_build_object('event_id',c.event_id,'data',c.data,'received_at_ms',c.received_at_ms,'mode',c.mode) AS candle,
-            jsonb_build_object('event_id',r.event_id,'data',r.data,'received_at_ms',r.received_at_ms,'mode',r.mode) AS ratio,
-            jsonb_build_object('event_id',t.event_id,'data',t.data,'received_at_ms',t.received_at_ms,'mode',t.mode) AS taker
-            FROM observations c
-            JOIN observations r USING(instrument,timeframe,period_start_ms)
-            JOIN observations t USING(instrument,timeframe,period_start_ms)
-            WHERE c.instrument=%s AND c.timeframe=%s AND c.kind='candle' AND r.kind='ratio' AND t.kind='taker'
-            ORDER BY c.period_start_ms''', (INSTRUMENT, tf)).fetchall()
+        kinds = KINDS_BY_TIMEFRAME[tf]
+        if kinds == ('candle',):
+            rows = db.execute('''SELECT c.period_start_ms,
+                jsonb_build_object('event_id',c.event_id,'data',c.data,'received_at_ms',c.received_at_ms,'mode',c.mode) AS candle
+                FROM observations c
+                WHERE c.instrument=%s AND c.timeframe=%s AND c.kind='candle'
+                ORDER BY c.period_start_ms''', (INSTRUMENT, tf)).fetchall()
+        else:
+            rows = db.execute('''SELECT c.period_start_ms,
+                jsonb_build_object('event_id',c.event_id,'data',c.data,'received_at_ms',c.received_at_ms,'mode',c.mode) AS candle,
+                jsonb_build_object('event_id',r.event_id,'data',r.data,'received_at_ms',r.received_at_ms,'mode',r.mode) AS ratio,
+                jsonb_build_object('event_id',t.event_id,'data',t.data,'received_at_ms',t.received_at_ms,'mode',t.mode) AS taker
+                FROM observations c
+                JOIN observations r USING(instrument,timeframe,period_start_ms)
+                JOIN observations t USING(instrument,timeframe,period_start_ms)
+                WHERE c.instrument=%s AND c.timeframe=%s AND c.kind='candle' AND r.kind='ratio' AND t.kind='taker'
+                ORDER BY c.period_start_ms''', (INSTRUMENT, tf)).fetchall()
         existing = {r['window_end_ms'] for r in db.execute('SELECT window_end_ms FROM feature_sets WHERE timeframe=%s AND lookback=%s AND feature_version=%s', (tf, lookback, VERSION))}
         for window in complete_windows(rows, tf, lookback):
             # end là mốc ngay sau period cuối, dùng làm định danh và biên phải
@@ -80,7 +88,7 @@ def build_windows(db, lookback):
             if end in existing:
                 continue
             fid = window_id(tf, end, lookback)
-            points = [r[k] for r in window for k in ('candle', 'ratio', 'taker')]
+            points = [r[k] for r in window for k in kinds]
             latest = max(p['received_at_ms'] for p in points)
             # Gắn provenance tổng hợp để downstream biết window có phụ thuộc dữ
             # liệu backfill/recovery hay chỉ gồm dữ liệu live.
@@ -88,6 +96,7 @@ def build_windows(db, lookback):
             recovery = any(p['mode'] == 'recovery' for p in points)
             payload = {'instrument':INSTRUMENT, 'timeframe':tf, 'window_end_ms':end,
                        'feature_version':VERSION, 'lookback':lookback, 'rows':window,
+                       'available_kinds':list(kinds),
                        'availability_policy':'observed-at-ingestion; historical publication times unknown'}
             digest = hashlib.sha256(canonical(payload).encode()).hexdigest()
             # Ghi feature set và outbox trong cùng transaction của writer. Nhờ

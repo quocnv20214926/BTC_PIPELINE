@@ -6,12 +6,25 @@ from decimal import Decimal, InvalidOperation
 
 # Độ dài timeframe tính bằng mili-giây. Mọi timestamp trong pipeline đều dùng
 # cùng đơn vị này để tránh trộn lẫn giây và mili-giây khi căn chỉnh dữ liệu.
-INTERVALS = {'15m': 900_000, '1h': 3_600_000}
+INTERVALS = {'1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000}
+# Binance Futures chỉ công bố các chuỗi global long/short và taker buy/sell
+# từ period 5m trở lên. Vì vậy 1m chỉ có dữ liệu kline (kline vẫn chứa sẵn
+# taker-buy volume), còn các timeframe khác giữ nguyên bộ ba nguồn trước đây.
+KINDS_BY_TIMEFRAME = {
+    '1m': ('candle',),
+    '5m': ('candle', 'ratio', 'taker'),
+    '15m': ('candle', 'ratio', 'taker'),
+    '1h': ('candle', 'ratio', 'taker'),
+}
 # Các hằng số này là tên định danh dùng chung giữa producer, consumer và DB.
 INSTRUMENT = 'binance:usdm:BTCUSDT'
 RAW = 'market.raw.v1'
 READY = 'features.ready.v1'
 DLQ = 'market.dlq.v1'
+MODEL_SIGNALS = 'signals.model.v1'
+ANOMALY_SIGNALS = 'signals.anomaly.v1'
+DECISIONS = 'decisions.trade.v1'
+EXECUTIONS = 'executions.testnet.v1'
 # VERSION được đưa vào event/window ID để một thay đổi schema tạo ra định danh
 # mới thay vì âm thầm ghi đè dữ liệu được tạo bởi phiên bản cũ.
 VERSION = 'raw-window-v1'
@@ -124,8 +137,8 @@ def complete_windows(rows, tf, lookback):
     """Sinh các cửa sổ liên tục đủ candle, ratio và taker.
 
     ``rows`` phải được sắp xếp theo thời gian và mỗi phần tử đã được join đủ
-    ba loại dữ liệu cho một period. Khoảng bị thiếu một timeframe sẽ làm cửa sổ
-    tương ứng không được phát hành.
+    các loại dữ liệu được cấu hình cho timeframe đó. Khoảng bị thiếu một
+    timeframe sẽ làm cửa sổ tương ứng không được phát hành.
     """
     for i in range(lookback - 1, len(rows)):
         window = rows[i - lookback + 1:i + 1]

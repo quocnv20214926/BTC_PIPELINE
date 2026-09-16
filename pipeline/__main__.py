@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .storage import connect, init_schema
 from .kafka_io import init_topics
+from .core import INTERVALS, INSTRUMENT
 
 
 def report():
@@ -18,6 +19,10 @@ def report():
             'outbox': db.execute('SELECT count(*) AS total,count(*) FILTER(WHERE published_at IS NULL) AS pending FROM outbox').fetchone(),
             'issues': db.execute('SELECT kind,count(*) AS count FROM data_issues GROUP BY kind').fetchall(),
             'services': db.execute('SELECT * FROM service_heartbeats ORDER BY service').fetchall(),
+            'latest_signals': db.execute('SELECT source,timeframe,event_time_ms,payload FROM latest_signals ORDER BY source').fetchall(),
+            'latest_decision': db.execute('SELECT * FROM trade_decisions ORDER BY event_time_ms DESC,stored_at DESC LIMIT 1').fetchone(),
+            'execution_state': db.execute('SELECT * FROM execution_state WHERE instrument=%s',(INSTRUMENT,)).fetchone(),
+            'latest_execution': db.execute('SELECT * FROM execution_events ORDER BY event_time_ms DESC LIMIT 1').fetchone(),
         }
 
 
@@ -28,7 +33,7 @@ def export():
     folder.mkdir(exist_ok=True)
     (folder/'status.json').write_text(json.dumps(report(),indent=2,default=str),encoding='utf-8')
     with connect() as db:
-        for tf in ('15m','1h'):
+        for tf in INTERVALS:
             # Chỉ xuất feature mới nhất cho từng timeframe để file artifact
             # không phình to theo toàn bộ lịch sử dữ liệu.
             row = db.execute('SELECT * FROM feature_sets WHERE timeframe=%s ORDER BY window_end_ms DESC LIMIT 1',(tf,)).fetchone()
@@ -43,7 +48,8 @@ def main():
     # của collector hoặc Kafka ngay từ đầu.
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(name)s %(message)s')
     parser = argparse.ArgumentParser()
-    parser.add_argument('command',choices=['init','collect','backfill','write','publish','status','export'])
+    parser.add_argument('command',choices=['init','collect','backfill','write','publish','model-signals',
+                                           'anomaly-signals','store-signals','decide','execute-testnet','status','export'])
     args = parser.parse_args()
     if args.command == 'init':
         # Khởi tạo schema PostgreSQL trước, sau đó tạo các topic Kafka cần thiết.
@@ -63,6 +69,14 @@ def main():
         # set đã commit thành công trong database.
         from .workers import publish
         publish()
+    elif args.command in ('model-signals','anomaly-signals','store-signals','decide'):
+        from .signal_workers import model_worker, anomaly_worker, signal_writer, central_worker
+        workers = {'model-signals':model_worker, 'anomaly-signals':anomaly_worker,
+                   'store-signals':signal_writer, 'decide':central_worker}
+        workers[args.command]()
+    elif args.command == 'execute-testnet':
+        from .execution import execution_worker
+        execution_worker()
     elif args.command == 'status':
         # In cùng nội dung với report() ra stdout để phù hợp với shell/monitoring.
         print(json.dumps(report(),indent=2,default=str))
