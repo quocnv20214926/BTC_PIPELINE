@@ -6,3 +6,5 @@ artifacts/*
 !artifacts/.gitkeep
 historical_data/
 .rollback/
+.jupyter_runtime/
+.ipython/

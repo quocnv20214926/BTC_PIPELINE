@@ -2,7 +2,7 @@ import hashlib
 import json
 import time
 import uuid
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 # Độ dài timeframe tính bằng mili-giây. Mọi timestamp trong pipeline đều dùng
 # cùng đơn vị này để tránh trộn lẫn giây và mili-giây khi căn chỉnh dữ liệu.

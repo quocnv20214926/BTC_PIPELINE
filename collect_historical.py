@@ -15,6 +15,7 @@ from pathlib import Path
 BASE = 'https://fapi.binance.com'
 STEPS = {'1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000}
 FIELDS = ['open_time_ms', 'open_time_utc', 'open', 'high', 'low', 'close', 'volume']
+START_UTC = datetime(2020, 7, 1, tzinfo=timezone.utc)
 
 def get(path, params):
     url = BASE + path + '?' + urllib.parse.urlencode(params)
@@ -130,10 +131,10 @@ def main():
     args = parser.parse_args()
     folder = Path(__file__).resolve().parent/'historical_data'
     folder.mkdir(exist_ok=True)
-    start = int(datetime(2020,1,1,tzinfo=timezone.utc).timestamp()*1000)
+    start = int(START_UTC.timestamp() * 1000)
     end = int(datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc).timestamp()*1000) if args.end else int(get('/fapi/v1/time', {})['serverTime'])
     if end <= start:
-        parser.error('end must be after 2020-01-01')
+        parser.error(f'end must be after {START_UTC.date().isoformat()}')
     collect(folder, start, end)
 
 if __name__ == '__main__':
