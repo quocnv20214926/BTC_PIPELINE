@@ -5,7 +5,7 @@ x-app: &app
   environment: &env
     DATABASE_URL: postgresql://pipeline:${POSTGRES_PASSWORD:?Create .env first}@postgres:5432/market
     KAFKA_BOOTSTRAP: kafka:9092
-    BACKFILL_DAYS: ${BACKFILL_DAYS:-7}
+    BACKFILL_DAYS: ${BACKFILL_DAYS:-28}   # tối đa: Binance chỉ giữ ~30 ngày open interest / ratio
     LOOKBACK: ${LOOKBACK:-60}
     POLL_SECONDS: ${POLL_SECONDS:-60}
   volumes:
@@ -76,31 +76,42 @@ services:
   publisher:
     <<: *app
     command: [ python, -m, pipeline, publish ]
-  model-signals:
-    <<: *app
-    command: [ python, -m, pipeline, model-signals ]
-  anomaly-signals:
-    <<: *app
-    command: [ python, -m, pipeline, anomaly-signals ]
-  signal-store:
-    <<: *app
-    command: [ python, -m, pipeline, store-signals ]
-  central-decision:
-    <<: *app
-    command: [ python, -m, pipeline, decide ]
-  testnet-executor:
+  model-signals-v3:
     <<: *app
     environment:
       <<: *env
-      BINANCE_TESTNET_API_KEY: ${BINANCE_TESTNET_API_KEY:-}
-      BINANCE_TESTNET_API_SECRET: ${BINANCE_TESTNET_API_SECRET:-}
-      TESTNET_EXECUTION_ENABLED: ${TESTNET_EXECUTION_ENABLED:-false}
-      TESTNET_ORDER_MARGIN_USDT: ${TESTNET_ORDER_MARGIN_USDT:-100}
-      TESTNET_LEVERAGE: ${TESTNET_LEVERAGE:-50}
-      TESTNET_STOP_LOSS_PCT: ${TESTNET_STOP_LOSS_PCT:-0.006}
-      TESTNET_TAKE_PROFIT_RR: ${TESTNET_TAKE_PROFIT_RR:-1.5}
-      TESTNET_MAX_DECISION_AGE_SECONDS: ${TESTNET_MAX_DECISION_AGE_SECONDS:-90}
-    command: [ python, -m, pipeline, execute-testnet ]
+      MODEL_V3_BUNDLE: ${MODEL_V3_BUNDLE:-artifacts/5m_event_v3/model_v3.joblib}
+      MODEL_V3_HISTORY_DAYS: ${MODEL_V3_HISTORY_DAYS:-20}
+      MODEL_V3_MIN_EV: ${MODEL_V3_MIN_EV:-}
+    command: [ python, -m, pipeline, model-signals-v3 ]
+  model-signals:
+    <<: *app
+    profiles: [ v2 ]   # model v2 cũ; bật bằng: docker compose --profile v2 up -d
+    environment:
+      <<: *env
+      MODEL_BUNDLE: ${MODEL_BUNDLE:-artifacts/5m_xgboost_signal_v2/models_final.joblib}
+      MODEL_HISTORY_DAYS: ${MODEL_HISTORY_DAYS:-30}
+      EXEC_RR: ${EXEC_RR:-1}
+      EXEC_MODE: ${EXEC_MODE:-abs}
+      EXEC_MIN_SCORE: ${EXEC_MIN_SCORE:-0.05}
+      EXEC_TOP_FRAC: ${EXEC_TOP_FRAC:-0.02}
+      EXEC_FEE_ROUNDTRIP: ${EXEC_FEE_ROUNDTRIP:-0.001}
+    command: [ python, -m, pipeline, model-signals ]
+  telegram:
+    <<: *app
+    environment:
+      <<: *env
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_SOURCE: ${TELEGRAM_SOURCE:-modelv3_event}
+      TELEGRAM_HEALTH_SERVICE: ${TELEGRAM_HEALTH_SERVICE:-model-signals-v3}
+      TELEGRAM_TRACK_RR: ${TELEGRAM_TRACK_RR:-1}
+      TELEGRAM_FEE_PCT: ${TELEGRAM_FEE_PCT:-0.001}
+      TELEGRAM_ONE_AT_A_TIME: ${TELEGRAM_ONE_AT_A_TIME:-false}
+      TELEGRAM_MAX_SIGNAL_AGE_MIN: ${TELEGRAM_MAX_SIGNAL_AGE_MIN:-15}
+      TELEGRAM_UTC_OFFSET_HOURS: ${TELEGRAM_UTC_OFFSET_HOURS:-7}
+      TELEGRAM_DAILY_HOUR: ${TELEGRAM_DAILY_HOUR:-8}
+    command: [ python, -m, pipeline, telegram ]
   grafana:
     image: grafana/grafana:11.6.0
     environment:

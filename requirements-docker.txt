@@ -1,0 +1,12 @@
+# Thư viện cho container pipeline (collector, writer, model-signals, telegram).
+# Không có torch / jupyter / matplotlib: những thứ đó chỉ dùng để train trên máy (requirements.txt).
+confluent-kafka==2.8.0
+psycopg[binary]==3.2.6
+httpx==0.28.1
+websockets==15.0.1
+numpy==2.2.6
+pandas==2.3.3
+scikit-learn==1.7.2
+joblib==1.5.2
+xgboost-cpu==3.2.0    # bản CPU (~6MB, không kéo nvidia-nccl ~350MB); cùng phiên bản với môi trường train
+numba==0.68.0

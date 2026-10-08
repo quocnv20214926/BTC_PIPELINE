@@ -8,7 +8,8 @@ import time
 import httpx
 from websockets.asyncio.client import connect as ws_connect
 
-from .core import INTERVALS, KINDS_BY_TIMEFRAME, INSTRUMENT, RAW, candle, metric, now_ms, validate
+from .core import (COLLECT_KINDS_BY_TIMEFRAME, END_STAMPED_KINDS, INTERVALS, INSTRUMENT, RAW, candle, metric,
+                   now_ms, validate)
 from .kafka_io import Sender
 from .storage import connect, heartbeat
 
@@ -22,7 +23,9 @@ WS = os.getenv('BINANCE_WS_URL', 'wss://fstream.binance.com/market/stream?stream
                 '/'.join(f'btcusdt@kline_{tf}' for tf in INTERVALS))
 # Ánh xạ tên loại dữ liệu nội bộ sang endpoint tương ứng của Binance. Candle
 # dùng endpoint klines, còn ratio/taker là các endpoint thống kê futures.
-PATHS = {'candle':'/fapi/v1/klines','ratio':'/futures/data/globalLongShortAccountRatio','taker':'/futures/data/takerlongshortRatio'}
+PATHS = {'candle':'/fapi/v1/klines','ratio':'/futures/data/globalLongShortAccountRatio','taker':'/futures/data/takerlongshortRatio',
+         'top_ratio':'/futures/data/topLongShortPositionRatio','oi':'/futures/data/openInterestHist',
+         'funding':'/fapi/v1/fundingRate'}
 
 
 async def get(client, path, params):
@@ -57,8 +60,8 @@ async def fetch_range(client, sender, tf, kind, start, end, mode):
     step = INTERVALS[tf]
     # endTime của Binance là inclusive, trong khi khoảng thời gian nội bộ dùng
     # [start, end). Metric chỉ xuất hiện sau khi nến bắt đầu nên cursor khác nhau.
-    cursor = start + step if kind == 'ratio' else start
-    last = end if kind == 'ratio' else end - 1
+    cursor = start + step if kind in END_STAMPED_KINDS else start
+    last = end if kind in END_STAMPED_KINDS else end - 1
     count = 0
     while cursor <= last:
         # Trừ 1 mili-giây để page_end vẫn nằm trong giới hạn trang hiện tại khi
@@ -98,6 +101,33 @@ async def fetch_range(client, sender, tf, kind, start, end, mode):
     return count
 
 
+async def fetch_funding(client, sender, start, end, mode):
+    # Funding rate được chốt mỗi 8h; endpoint không có tham số period và trả tối
+    # đa 1000 bản ghi. Mỗi bản ghi được gán vào kỳ 1h kết thúc tại giờ chốt.
+    count, cursor = 0, start
+    while cursor < end:
+        rows = await get(client, PATHS['funding'], {'symbol':'BTCUSDT', 'startTime':cursor, 'endTime':end - 1, 'limit':1000})
+        if not isinstance(rows, list):
+            raise ValueError(f'unexpected Binance response: {rows}')
+        if not rows:
+            break
+        received = now_ms()
+        for row in rows:
+            event = metric('funding', '1h', row, BASE + PATHS['funding'], mode, received)
+            if event['period_start_ms'] < start - INTERVALS['1h'] or event['period_end_ms'] > end:
+                continue
+            validate(event)
+            sender.send(RAW, INSTRUMENT, event)
+            count += 1
+        sender.flush()
+        last = int(rows[-1]['fundingTime'])
+        if last + 1 <= cursor:
+            break
+        cursor = last + 1
+        await asyncio.sleep(0.15)
+    return count
+
+
 async def poll_loop(once=False):
     # REST collector đảm nhiệm backfill ban đầu và recovery các khoảng dữ liệu
     # còn thiếu. WebSocket không thay thế bước này vì có thể mất kết nối hoặc
@@ -120,7 +150,7 @@ async def poll_loop(once=False):
                         end = server_now // step * step
                         # Không gọi endpoint metric với period không được Binance
                         # hỗ trợ (đặc biệt là 1m).
-                        for kind in KINDS_BY_TIMEFRAME[tf]:
+                        for kind in COLLECT_KINDS_BY_TIMEFRAME[tf]:
                             if first:
                                 # Lần chạy đầu lấy toàn bộ cửa sổ backfill, căn
                                 # start theo biên của timeframe hiện tại.
@@ -133,7 +163,10 @@ async def poll_loop(once=False):
                                 start = max((server_now - days * 86400_000)//step*step,
                                             (latest - 2*step) if latest is not None else end - days*86400_000)
                             mode = 'backfill' if first else 'recovery'
-                            counts[f'{tf}/{kind}'] = await fetch_range(client, sender, tf, kind, start, end, mode)
+                            if kind == 'funding':
+                                counts[f'{tf}/{kind}'] = await fetch_funding(client, sender, start, end, mode)
+                            else:
+                                counts[f'{tf}/{kind}'] = await fetch_range(client, sender, tf, kind, start, end, mode)
                     heartbeat(db, 'collector-rest', {'state':'ok','counts':counts,'server_time_ms':server_now})
                     log.info('REST collection complete %s', counts)
                     first = False

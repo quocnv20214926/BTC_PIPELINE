@@ -3,7 +3,9 @@ from collect_historical import validate
 
 class ValidationTests(unittest.TestCase):
     def row(self, t):
-        return dict(open_time_ms=t, open='100', high='110', low='90', close='105', volume='1')
+        return dict(open_time_ms=t, open='100', high='110', low='90', close='105', volume='1',
+                    quote_volume='105', trades='3', taker_buy_base_asset_volume='0.5',
+                    taker_buy_quote_asset_volume='52.5')
     def test_contiguous(self):
         validate([self.row(0),self.row(900000)],0,1800000,900000)
     def test_missing(self):
@@ -16,6 +18,13 @@ class ValidationTests(unittest.TestCase):
         row=self.row(0); row['high']='99'
         with self.assertRaises(ValueError):
             validate([row],0,900000,900000)
+    def test_taker_above_volume(self):
+        row=self.row(0); row['taker_buy_base_asset_volume']='2'
+        with self.assertRaises(ValueError):
+            validate([row],0,900000,900000)
+    def test_old_ohlcv_layout_still_validates(self):
+        row=dict(open_time_ms=0, open='100', high='110', low='90', close='105', volume='1')
+        validate([row],0,900000,900000)
     def test_nan(self):
         row=self.row(0); row['volume']='NaN'
         with self.assertRaises(ValueError):
@@ -36,7 +45,7 @@ class ResumeTests(unittest.TestCase):
         end=start+3600000
         def fake_get(path, params):
             step={'1m':60000,'5m':300000,'15m':900000,'1h':3600000}[params['interval']]
-            return [[t,'100','110','90','105','1',t+step-1] for t in range(params['startTime'],params['endTime']+1,step)]
+            return [[t,'100','110','90','105','1',t+step-1,'105',3,'0.5','52.5','0'] for t in range(params['startTime'],params['endTime']+1,step)]
         with TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
             with patch('collect_historical.get',side_effect=fake_get), patch('collect_historical.time.sleep'):
                 collect(Path(folder),start,end)
@@ -55,7 +64,7 @@ class TotalsTests(unittest.TestCase):
         start=1580511600000  # 2020-01-31 23:00 UTC
         def fake_get(path, params):
             step={'1m':60000,'5m':300000,'15m':900000,'1h':3600000}[params['interval']]
-            return [[t,'100','110','90','105','1',t+step-1] for t in range(params['startTime'],params['endTime']+1,step)]
+            return [[t,'100','110','90','105','1',t+step-1,'105',3,'0.5','52.5','0'] for t in range(params['startTime'],params['endTime']+1,step)]
         with TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), patch('collect_historical.get',side_effect=fake_get), patch('collect_historical.time.sleep'):
             folder=Path(folder)
             collect(folder,start,start+3600000)

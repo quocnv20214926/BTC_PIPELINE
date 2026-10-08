@@ -3,3 +3,13 @@
 artifacts
 __pycache__
 *.pyc
+.venv
+historical_data
+historical_data_analysis
+model_evaluation
+models_storage
+monitoring
+*.ipynb
+.ipython
+.jupyter_runtime
+.vscode

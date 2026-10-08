@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .storage import connect, init_schema
 from .kafka_io import init_topics
-from .core import INTERVALS, INSTRUMENT
+from .core import INTERVALS
 
 
 def report():
@@ -19,10 +19,8 @@ def report():
             'outbox': db.execute('SELECT count(*) AS total,count(*) FILTER(WHERE published_at IS NULL) AS pending FROM outbox').fetchone(),
             'issues': db.execute('SELECT kind,count(*) AS count FROM data_issues GROUP BY kind').fetchall(),
             'services': db.execute('SELECT * FROM service_heartbeats ORDER BY service').fetchall(),
-        #     'latest_signals': db.execute('SELECT source,timeframe,event_time_ms,payload FROM latest_signals ORDER BY source').fetchall(),
-        #     'latest_decision': db.execute('SELECT * FROM trade_decisions ORDER BY event_time_ms DESC,stored_at DESC LIMIT 1').fetchone(),
-        #     'execution_state': db.execute('SELECT * FROM execution_state WHERE instrument=%s',(INSTRUMENT,)).fetchone(),
-        #     'latest_execution': db.execute('SELECT * FROM execution_events ORDER BY event_time_ms DESC LIMIT 1').fetchone(),
+            'latest_signals': db.execute("SELECT source,timeframe,event_time_ms,payload->'decision' AS decision FROM latest_signals ORDER BY source").fetchall(),
+            'telegram': db.execute("SELECT kind,count(*) AS count,max(sent_at) AS last_sent FROM telegram_messages GROUP BY kind ORDER BY kind").fetchall(),
         }
 
 
@@ -47,9 +45,12 @@ def main():
     # bên trong từng nhánh giúp lệnh status/export không cần tải mọi dependency
     # của collector hoặc Kafka ngay từ đầu.
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(name)s %(message)s')
+    # httpx log cả URL ở mức INFO; URL Telegram chứa token bot -> không log.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser()
-    parser.add_argument('command',choices=['init','collect','backfill','write','publish','model-signals',
-                                           'anomaly-signals','store-signals','decide','execute-testnet','status','export'])
+    parser.add_argument('command',choices=['init','collect','backfill','write','publish','model-signals','model-signals-v3',
+                                           'telegram','telegram-setup','status','export'])
     args = parser.parse_args()
     if args.command == 'init':
         # Khởi tạo schema PostgreSQL trước, sau đó tạo các topic Kafka cần thiết.
@@ -69,14 +70,22 @@ def main():
         # set đã commit thành công trong database.
         from .workers import publish
         publish()
-    # elif args.command in ('model-signals','anomaly-signals','store-signals','decide'):
-    #     from .signal_workers import model_worker, anomaly_worker, signal_writer, central_worker
-    #     workers = {'model-signals':model_worker, 'anomaly-signals':anomaly_worker,
-    #                'store-signals':signal_writer, 'decide':central_worker}
-    #     workers[args.command]()
-    # elif args.command == 'execute-testnet':
-    #     from .execution import execution_worker
-    #     execution_worker()
+    elif args.command == 'model-signals':
+        # Model v2 (5m): đọc nến từ observations, ghi signal_events + outbox.
+        from .model_signals import model_worker
+        model_worker()
+    elif args.command == 'model-signals-v3':
+        # Model v3 (sự kiện bất thường, TP = SL): đọc nến 1m từ observations, ghi signal_events + outbox.
+        from .model_signals_v3 import model_worker_v3
+        model_worker_v3()
+    elif args.command == 'telegram':
+        # Gửi tín hiệu tốt + kết quả TP/SL qua Telegram bot (đọc signal_events).
+        from .telegram_bot import telegram_worker
+        telegram_worker()
+    elif args.command == 'telegram-setup':
+        # Kiểm tra token, in chat id, gửi tin thử.
+        from .telegram_bot import telegram_setup
+        telegram_setup()
     elif args.command == 'status':
         # In cùng nội dung với report() ra stdout để phù hợp với shell/monitoring.
         print(json.dumps(report(),indent=2,default=str))

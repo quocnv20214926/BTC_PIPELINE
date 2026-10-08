@@ -1,5 +1,7 @@
 {
-  "annotations": {"list": []},
+  "annotations": {
+    "list": []
+  },
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -8,161 +10,746 @@
   "liveNow": true,
   "panels": [
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
-      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Raw events (1h)\" FROM raw_events WHERE stored_at >= now() - interval '1 hour'", "refId": "A"}],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS \"Raw events (1h)\" FROM raw_events WHERE stored_at >= now() - interval '1 hour'",
+          "refId": "A"
+        }
+      ],
       "title": "Raw events / 1h",
       "type": "stat"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
       "id": 2,
-      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Feature windows (1h)\" FROM feature_sets WHERE prepared_at >= now() - interval '1 hour'", "refId": "A"}],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS \"Feature windows (1h)\" FROM feature_sets WHERE prepared_at >= now() - interval '1 hour'",
+          "refId": "A"
+        }
+      ],
       "title": "Feature windows / 1h",
       "type": "stat"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
       "id": 3,
-      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Signals (1h)\" FROM signal_events WHERE stored_at >= now() - interval '1 hour'", "refId": "A"}],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS \"Signals (1h)\" FROM signal_events WHERE stored_at >= now() - interval '1 hour'",
+          "refId": "A"
+        }
+      ],
       "title": "Signals / 1h",
       "type": "stat"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
       "id": 4,
-      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Allowed trades (1h)\" FROM trade_decisions WHERE trade_allowed AND stored_at >= now() - interval '1 hour'", "refId": "A"}],
-      "title": "Allowed trades / 1h",
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS \"Lệnh bot (24h)\" FROM telegram_messages WHERE kind='signal' AND sent_at >= now() - interval '24 hours'",
+          "refId": "A"
+        }
+      ],
+      "title": "Lệnh bot / 24h",
       "type": "stat"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
       "id": 5,
-      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Outbox pending\" FROM outbox WHERE published_at IS NULL", "refId": "A"}],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS \"Outbox pending\" FROM outbox WHERE published_at IS NULL",
+          "refId": "A"
+        }
+      ],
       "title": "Outbox pending",
       "type": "stat"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 120}, {"color": "red", "value": 300}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 120
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
       "id": 6,
-      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(max(extract(epoch FROM now() - updated_at)), 0) AS \"Oldest heartbeat\" FROM service_heartbeats", "refId": "A"}],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(max(extract(epoch FROM now() - updated_at)), 0) AS \"Oldest heartbeat\" FROM service_heartbeats",
+          "refId": "A"
+        }
+      ],
       "title": "Oldest heartbeat",
       "type": "stat"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "events", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 3, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"}}}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "events",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 3,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
       "id": 7,
-      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"editorMode": "code", "format": "time_series", "rawQuery": true, "rawSql": "SELECT $__timeGroupAlias(stored_at, '1m'), timeframe AS metric, count(*) AS value FROM raw_events WHERE $__timeFilter(stored_at) GROUP BY 1, 2 ORDER BY 1", "refId": "A"}],
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(stored_at, '1m'), timeframe AS metric, count(*) AS value FROM raw_events WHERE $__timeFilter(stored_at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
       "title": "Dữ liệu đầu vào theo timeframe",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "signals", "axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1, "pointSize": 3, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"}}}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "signals",
+            "axisPlacement": "auto",
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "pointSize": 3,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
       "id": 8,
-      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"editorMode": "code", "format": "time_series", "rawQuery": true, "rawSql": "SELECT $__timeGroupAlias(stored_at, '5m'), source AS metric, count(*) AS value FROM signal_events WHERE $__timeFilter(stored_at) GROUP BY 1, 2 ORDER BY 1", "refId": "A"}],
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(stored_at, '5m'), source AS metric, count(*) AS value FROM signal_events WHERE $__timeFilter(stored_at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
       "title": "Tín hiệu M1 / M5 / M15",
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 9, "w": 14, "x": 0, "y": 12},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 14,
+        "x": 0,
+        "y": 12
+      },
       "id": 9,
-      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "event_time"}]},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT source, timeframe, to_timestamp(event_time_ms / 1000.0) AS event_time, COALESCE(payload->'output'->>'predicted_class', payload->>'severity') AS result, COALESCE(payload->'output'->>'confidence', payload->>'anomaly_score') AS score, payload->'output'->>'risk_ratio' AS risk_ratio, stored_at FROM latest_signals ORDER BY event_time_ms DESC", "refId": "A"}],
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "event_time"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT source, timeframe, to_timestamp(event_time_ms / 1000.0) AS event_time, payload->'decision'->>'side' AS side, (payload->'decision'->>'good')::boolean AS enter, round((payload->'decision'->>'score')::numeric, 4) AS expected_r, payload->'decision'->>'threshold' AS threshold, stored_at FROM latest_signals ORDER BY event_time_ms DESC",
+          "refId": "A"
+        }
+      ],
       "title": "Tín hiệu mới nhất",
       "type": "table"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 9, "w": 10, "x": 14, "y": 12},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 12
+      },
       "id": 10,
-      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "event_time"}]},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT to_timestamp(event_time_ms / 1000.0) AS event_time, action, trade_allowed, round((payload->'output'->>'confidence')::numeric, 4) AS confidence, round((payload->'output'->>'risk_ratio')::numeric, 4) AS risk_ratio, payload->'output'->'reasons' AS reasons FROM trade_decisions ORDER BY event_time_ms DESC LIMIT 20", "refId": "A"}],
-      "title": "Quyết định trung tâm gần nhất",
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "sent_at"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT sent_at, payload->>'side' AS side, payload->'outcome'->>'status' AS result, round((payload->'outcome'->>'r_net')::numeric, 3) AS r_net, (payload->'outcome'->>'minutes')::int AS minutes FROM telegram_messages WHERE kind='result' ORDER BY sent_at DESC LIMIT 30",
+          "refId": "A"
+        }
+      ],
+      "title": "Kết quả lệnh bot gần nhất",
       "type": "table"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "age_seconds"}, "properties": [{"id": "unit", "value": "s"}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 120}, {"color": "red", "value": 300}]}}, {"id": "custom.cellOptions", "value": {"mode": "basic", "type": "color-background"}}]}]},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 120
+                    },
+                    {
+                      "color": "red",
+                      "value": 300
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
       "id": 11,
-      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT service, round(extract(epoch FROM now() - updated_at)) AS age_seconds, updated_at, details->>'state' AS state, details FROM service_heartbeats ORDER BY service", "refId": "A"}],
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT service, round(extract(epoch FROM now() - updated_at)) AS age_seconds, updated_at, details->>'state' AS state, details FROM service_heartbeats ORDER BY service",
+          "refId": "A"
+        }
+      ],
       "title": "Sức khỏe các service",
       "type": "table"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 21},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 21
+      },
       "id": 12,
-      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT topic, count(*) AS pending, min(created_at) AS oldest FROM outbox WHERE published_at IS NULL GROUP BY topic ORDER BY pending DESC", "refId": "A"}],
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT topic, count(*) AS pending, min(created_at) AS oldest FROM outbox WHERE published_at IS NULL GROUP BY topic ORDER BY pending DESC",
+          "refId": "A"
+        }
+      ],
       "title": "Outbox backlog theo topic",
       "type": "table"
     },
     {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 21},
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 21
+      },
       "id": 13,
-      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT created_at, kind, details FROM data_issues WHERE $__timeFilter(created_at) ORDER BY created_at DESC LIMIT 50", "refId": "A"}],
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at, kind, details FROM data_issues WHERE $__timeFilter(created_at) ORDER BY created_at DESC LIMIT 50",
+          "refId": "A"
+        }
+      ],
       "title": "Lỗi / bất thường dữ liệu",
-      "type": "table"
-    },
-    {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 7, "w": 10, "x": 0, "y": 29},
-      "id": 14,
-      "options": {"cellHeight": "sm", "showHeader": true},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT position_side, position_amount, entry_price, stop_loss_price, take_profit_price, unrealized_pnl, protection_status, last_sync_at FROM execution_state", "refId": "A"}],
-      "title": "Binance Testnet — vị thế hiện tại",
-      "type": "table"
-    },
-    {
-      "datasource": {"type": "postgres", "uid": "postgres-market"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 7, "w": 14, "x": 10, "y": 29},
-      "id": 15,
-      "options": {"cellHeight": "sm", "showHeader": true, "sortBy": [{"desc": true, "displayName": "stored_at"}]},
-      "targets": [{"editorMode": "code", "format": "table", "rawQuery": true, "rawSql": "SELECT stored_at, event_type, status, payload->'details'->>'side' AS side, payload->'details'->>'entry_price' AS entry_price, payload->'details'->>'stop_loss' AS stop_loss, payload->'details'->>'take_profit' AS take_profit, payload->'details'->>'reason' AS reason FROM execution_events ORDER BY event_time_ms DESC LIMIT 50", "refId": "A"}],
-      "title": "Binance Testnet — vòng đời lệnh",
       "type": "table"
     }
   ],
   "refresh": "10s",
   "schemaVersion": 40,
-  "tags": ["btc", "kafka", "pipeline"],
-  "templating": {"list": []},
-  "time": {"from": "now-6h", "to": "now"},
+  "tags": [
+    "btc",
+    "kafka",
+    "pipeline"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
   "title": "BTC Pipeline Overview",

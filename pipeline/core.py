@@ -16,15 +16,35 @@ KINDS_BY_TIMEFRAME = {
     '15m': ('candle', 'ratio', 'taker'),
     '1h': ('candle', 'ratio', 'taker'),
 }
+# Các nguồn được THU THẬP (ghi vào observations). KINDS_BY_TIMEFRAME ở trên vẫn
+# là các nguồn được join để tạo feature window, nên thêm nguồn mới không làm
+# thay đổi feature_sets đã có. Nguồn mới:
+#   top_ratio : tỷ lệ vị thế long/short của top trader (topLongShortPositionRatio)
+#   oi        : open interest lịch sử (openInterestHist) - Binance chỉ giữ ~30 ngày,
+#               vì vậy phải ghi liên tục mới có dữ liệu dài hạn
+#   funding   : funding rate đã chốt (mỗi 8h), lưu dưới timeframe '1h' (kỳ kết thúc tại giờ chốt)
+COLLECT_KINDS_BY_TIMEFRAME = {
+    '1m': ('candle',),
+    '5m': ('candle', 'ratio', 'taker', 'top_ratio', 'oi'),
+    '15m': ('candle', 'ratio', 'taker', 'top_ratio', 'oi'),
+    '1h': ('candle', 'ratio', 'taker', 'top_ratio', 'oi', 'funding'),
+}
+# Metric có timestamp là THỜI ĐIỂM KẾT THÚC kỳ: giá trị được gán cho kỳ kết thúc
+# tại timestamp (chỉ được biết sau thời điểm đó -> không nhìn trước).
+END_STAMPED_KINDS = ('ratio', 'top_ratio', 'oi')
+METRIC_FIELDS = {
+    'ratio': ('longShortRatio', 'longAccount', 'shortAccount'),
+    'top_ratio': ('longShortRatio', 'longAccount', 'shortAccount'),
+    'taker': ('buySellRatio', 'buyVol', 'sellVol'),
+    'oi': ('sumOpenInterest', 'sumOpenInterestValue'),
+    'funding': ('fundingRate', 'markPrice'),
+}
 # Các hằng số này là tên định danh dùng chung giữa producer, consumer và DB.
 INSTRUMENT = 'binance:usdm:BTCUSDT'
 RAW = 'market.raw.v1'
 READY = 'features.ready.v1'
 DLQ = 'market.dlq.v1'
 MODEL_SIGNALS = 'signals.model.v1'
-ANOMALY_SIGNALS = 'signals.anomaly.v1'
-DECISIONS = 'decisions.trade.v1'
-EXECUTIONS = 'executions.testnet.v1'
 # VERSION được đưa vào event/window ID để một thay đổi schema tạo ra định danh
 # mới thay vì âm thầm ghi đè dữ liệu được tạo bởi phiên bản cũ.
 VERSION = 'raw-window-v1'
@@ -77,13 +97,20 @@ def candle(tf, row, source, mode, received=None):
 
 
 def metric(kind, tf, row, source, mode, received=None):
-    # Ratio và taker dùng dict JSON thay vì mảng kline. Riêng ratio có timestamp
-    # là thời điểm kết thúc, còn taker dùng thời điểm bắt đầu của kỳ.
-    ts = int(row['timestamp'])
-    # Binance documentation: global account ratio timestamp=end; taker timestamp=start.
-    start = ts - INTERVALS[tf] if kind == 'ratio' else ts
-    fields = ['longShortRatio', 'longAccount', 'shortAccount'] if kind == 'ratio' else ['buySellRatio', 'buyVol', 'sellVol']
-    data = {name: number(row[name]) for name in fields}
+    # Các metric dùng dict JSON thay vì mảng kline. ratio / top_ratio / oi có
+    # timestamp là thời điểm kết thúc kỳ, taker dùng thời điểm bắt đầu kỳ.
+    # funding có fundingTime (vài mili-giây sau mốc giờ chốt) -> gán vào kỳ KẾT THÚC
+    # tại mốc chốt, tức giá trị được biết đúng lúc kỳ đóng (không nhìn trước).
+    if kind == 'funding':
+        ts = int(row['fundingTime'])
+        start = ts // INTERVALS[tf] * INTERVALS[tf] - INTERVALS[tf]
+        data = {'fundingRate': number(row['fundingRate']),
+                'markPrice': number(row['markPrice']) if row.get('markPrice') not in (None, '') else '0'}
+    else:
+        ts = int(row['timestamp'])
+        # Binance documentation: global account ratio timestamp=end; taker timestamp=start.
+        start = ts - INTERVALS[tf] if kind in END_STAMPED_KINDS else ts
+        data = {name: number(row[name]) for name in METRIC_FIELDS[kind]}
     data['source_timestamp_ms'] = ts
     return envelope(kind, tf, start, data, source, mode, row, received)
 
@@ -111,15 +138,19 @@ def validate(e):
             raise ValueError('invalid candle number')
         if min(o, h, l, c) <= 0 or v < 0 or l > min(o, c) or h < max(o, c) or l > h:
             raise ValueError('invalid OHLCV')
-    elif e['kind'] in ('ratio', 'taker'):
+    elif e['kind'] in ('ratio', 'top_ratio', 'taker', 'oi'):
         # Các metric là tỷ lệ/khối lượng nên không được âm; longAccount và
         # shortAccount phải nằm trong [0,1] và tổng xấp xỉ 1.
-        keys = ('longShortRatio', 'longAccount', 'shortAccount') if e['kind'] == 'ratio' else ('buySellRatio', 'buyVol', 'sellVol')
-        vals = [Decimal(d[k]) for k in keys]
+        vals = [Decimal(d[k]) for k in METRIC_FIELDS[e['kind']]]
         if any(not x.is_finite() or x < 0 for x in vals):
             raise ValueError('invalid metric')
-        if e['kind'] == 'ratio' and (vals[1] > 1 or vals[2] > 1 or abs(vals[1] + vals[2] - 1) > Decimal('0.001')):
+        if e['kind'] in ('ratio', 'top_ratio') and (vals[1] > 1 or vals[2] > 1 or abs(vals[1] + vals[2] - 1) > Decimal('0.001')):
             raise ValueError('invalid account fractions')
+    elif e['kind'] == 'funding':
+        # Funding rate có thể âm; chỉ cần hữu hạn và trong biên hợp lý (|rate| < 5%).
+        rate, mark = Decimal(d['fundingRate']), Decimal(d['markPrice'])
+        if not rate.is_finite() or abs(rate) >= Decimal('0.05') or not mark.is_finite() or mark < 0:
+            raise ValueError('invalid funding')
     else:
         raise ValueError('unknown event type')
     expected = hashlib.sha256(canonical([INSTRUMENT, e['kind'], tf, start, d]).encode()).hexdigest()
