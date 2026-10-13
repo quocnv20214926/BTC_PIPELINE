@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS raw_events (
     event_id text PRIMARY KEY,
     instrument text NOT NULL,
     timeframe text NOT NULL CHECK (timeframe IN ('1m','5m','15m','1h')),
-    kind text NOT NULL CHECK (kind IN ('candle','ratio','taker','top_ratio','oi','funding')),
+    kind text NOT NULL CHECK (kind IN ('candle','ratio','taker','top_ratio','top_acct_ratio','oi','premium','funding')),
     period_start_ms bigint NOT NULL,
     received_at_ms bigint NOT NULL,
     envelope jsonb NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS raw_events (
 -- Nâng cấp schema để nhận các nguồn mới (open interest, top trader ratio, funding).
 ALTER TABLE raw_events DROP CONSTRAINT IF EXISTS raw_events_kind_check;
 ALTER TABLE raw_events ADD CONSTRAINT raw_events_kind_check
-    CHECK (kind IN ('candle','ratio','taker','top_ratio','oi','funding'));
+    CHECK (kind IN ('candle','ratio','taker','top_ratio','top_acct_ratio','oi','premium','funding'));
 ALTER TABLE raw_events DROP CONSTRAINT IF EXISTS raw_events_timeframe_check;
 ALTER TABLE raw_events ADD CONSTRAINT raw_events_timeframe_check
     CHECK (timeframe IN ('1m','5m','15m','1h'));
@@ -77,15 +77,59 @@ CREATE TABLE IF NOT EXISTS signal_events (
     instrument text NOT NULL,
     signal_type text NOT NULL CHECK (signal_type IN ('model','anomaly')),
     source text NOT NULL,
-    timeframe text NOT NULL CHECK (timeframe IN ('1m','5m','15m')),
+    timeframe text NOT NULL CHECK (timeframe IN ('1m','5m','15m','1h')),
     event_time_ms bigint NOT NULL,
     produced_at_ms bigint NOT NULL,
     payload jsonb NOT NULL,
     stored_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(source,event_time_ms)
 );
+ALTER TABLE signal_events DROP CONSTRAINT IF EXISTS signal_events_timeframe_check;
+ALTER TABLE signal_events ADD CONSTRAINT signal_events_timeframe_check
+    CHECK (timeframe IN ('1m','5m','15m','1h'));
 CREATE INDEX IF NOT EXISTS signal_events_source_time
     ON signal_events(source,event_time_ms DESC);
+-- Chiến lược H1: lệnh paper do bộ thực thi (pipeline/strategy_exec.py) quản lý.
+--   PENDING: đã nhận tín hiệu, chờ nến 1m đầu tiên sau lúc ra quyết định để khớp giá vào
+--   OPEN -> TP | SL | ANOMALY (thoát nhanh 5m) | TIMEOUT (hết thời gian giữ) ; CANCELLED: không khớp được
+CREATE TABLE IF NOT EXISTS strategy_trades (
+    trade_id text PRIMARY KEY,
+    source text NOT NULL,
+    signal_id text NOT NULL REFERENCES signal_events(signal_id),
+    hour_open_ms bigint NOT NULL,
+    decision_ms bigint NOT NULL,
+    side smallint NOT NULL CHECK (side IN (-1, 1)),
+    b_pct double precision NOT NULL,
+    status text NOT NULL CHECK (status IN ('PENDING','OPEN','TP','SL','ANOMALY','TIMEOUT','CANCELLED')),
+    entry_ms bigint,
+    entry double precision,
+    entry_ref double precision,
+    tp double precision,
+    sl double precision,
+    risk_frac double precision,
+    exit_ms bigint,
+    exit_close_ms bigint,
+    exit_price double precision,
+    r_gross double precision,
+    r_net double precision,
+    equity_after double precision,
+    last_bar_ms bigint,
+    state jsonb NOT NULL DEFAULT '{}'::jsonb,
+    params jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (source, hour_open_ms)
+);
+CREATE INDEX IF NOT EXISTS strategy_trades_status ON strategy_trades(source, status);
+CREATE INDEX IF NOT EXISTS strategy_trades_exit ON strategy_trades(source, exit_close_ms);
+-- Vốn paper (lãi kép, bắt đầu 1.0) và giờ tín hiệu được nhận gần nhất.
+CREATE TABLE IF NOT EXISTS strategy_state (
+    source text PRIMARY KEY,
+    equity double precision NOT NULL,
+    last_entry_hour_ms bigint,
+    details jsonb NOT NULL DEFAULT '{}'::jsonb,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS telegram_messages (
     dedup_key text PRIMARY KEY,
     kind text NOT NULL CHECK (kind IN ('signal','result','skipped','daily')),
@@ -106,3 +150,6 @@ $$;
 DROP TRIGGER IF EXISTS feature_sets_immutable ON feature_sets;
 CREATE TRIGGER feature_sets_immutable BEFORE UPDATE OR DELETE ON feature_sets
 FOR EACH ROW EXECUTE FUNCTION immutable_feature_set();
+
+-- Dọn heartbeat của các worker đã bỏ (model v2 / v3) để Grafana và cảnh báo không báo đỏ mãi.
+DELETE FROM service_heartbeats WHERE service IN ('model-signals', 'model-signals-v3');

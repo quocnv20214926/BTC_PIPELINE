@@ -21,6 +21,9 @@ def report():
             'services': db.execute('SELECT * FROM service_heartbeats ORDER BY service').fetchall(),
             'latest_signals': db.execute("SELECT source,timeframe,event_time_ms,payload->'decision' AS decision FROM latest_signals ORDER BY source").fetchall(),
             'telegram': db.execute("SELECT kind,count(*) AS count,max(sent_at) AS last_sent FROM telegram_messages GROUP BY kind ORDER BY kind").fetchall(),
+            'strategy_state': db.execute('SELECT * FROM strategy_state ORDER BY source').fetchall(),
+            'strategy_trades': db.execute('''SELECT source,status,count(*) AS count,round(sum(r_net)::numeric,3) AS sum_r_net
+                FROM strategy_trades GROUP BY source,status ORDER BY source,status''').fetchall(),
         }
 
 
@@ -49,8 +52,9 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser()
-    parser.add_argument('command',choices=['init','collect','backfill','write','publish','model-signals','model-signals-v3',
-                                           'telegram','telegram-setup','status','export'])
+    parser.add_argument('command',choices=['init','collect','backfill','write','publish','strategy-h1',
+                                           'check-positioning','public-site','telegram','telegram-setup','status','export'])
+    parser.add_argument('--day', help='check-positioning: ngày YYYY-MM-DD (mặc định: 2 ngày trước)')
     args = parser.parse_args()
     if args.command == 'init':
         # Khởi tạo schema PostgreSQL trước, sau đó tạo các topic Kafka cần thiết.
@@ -70,16 +74,20 @@ def main():
         # set đã commit thành công trong database.
         from .workers import publish
         publish()
-    elif args.command == 'model-signals':
-        # Model v2 (5m): đọc nến từ observations, ghi signal_events + outbox.
-        from .model_signals import model_worker
-        model_worker()
-    elif args.command == 'model-signals-v3':
-        # Model v3 (sự kiện bất thường, TP = SL): đọc nến 1m từ observations, ghi signal_events + outbox.
-        from .model_signals_v3 import model_worker_v3
-        model_worker_v3()
+    elif args.command == 'strategy-h1':
+        # Chiến lược H1 (touch + hướng B): tín hiệu mỗi giờ + bộ thực thi lệnh paper (strategy_trades).
+        from .strategy_live import strategy_worker
+        strategy_worker()
+    elif args.command == 'check-positioning':
+        # So timestamp REST của dữ liệu vị thế với data.binance.vision (quy ước dùng khi train).
+        from .strategy_live import check_positioning
+        check_positioning(args.day)
+    elif args.command == 'public-site':
+        # Trang công khai (% tài khoản): ghi artifacts/public + đẩy lên GitHub nếu cấu hình.
+        from .public_site import public_worker
+        public_worker()
     elif args.command == 'telegram':
-        # Gửi tín hiệu tốt + kết quả TP/SL qua Telegram bot (đọc signal_events).
+        # Thông báo lệnh paper của strategy-h1 (mở / đóng / bỏ qua) qua Telegram bot.
         from .telegram_bot import telegram_worker
         telegram_worker()
     elif args.command == 'telegram-setup':

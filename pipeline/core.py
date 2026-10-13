@@ -7,6 +7,8 @@ from decimal import Decimal
 # Độ dài timeframe tính bằng mili-giây. Mọi timestamp trong pipeline đều dùng
 # cùng đơn vị này để tránh trộn lẫn giây và mili-giây khi căn chỉnh dữ liệu.
 INTERVALS = {'1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000}
+# Nguồn tín hiệu của chiến lược H1 (signal_events.source, strategy_trades.source).
+STRATEGY_SOURCE = 'strategy_h1'
 # Binance Futures chỉ công bố các chuỗi global long/short và taker buy/sell
 # từ period 5m trở lên. Vì vậy 1m chỉ có dữ liệu kline (kline vẫn chứa sẵn
 # taker-buy volume), còn các timeframe khác giữ nguyên bộ ba nguồn trước đây.
@@ -23,18 +25,24 @@ KINDS_BY_TIMEFRAME = {
 #   oi        : open interest lịch sử (openInterestHist) - Binance chỉ giữ ~30 ngày,
 #               vì vậy phải ghi liên tục mới có dữ liệu dài hạn
 #   funding   : funding rate đã chốt (mỗi 8h), lưu dưới timeframe '1h' (kỳ kết thúc tại giờ chốt)
+#   top_acct_ratio : tỷ lệ TÀI KHOẢN long/short của top trader (topLongShortAccountRatio)
+#   premium   : nến premium index 5m (premiumIndexKlines)
+# Chiến lược H1 (pipeline/strategy_live.py) dùng 5m: oi, top_acct_ratio, top_ratio, ratio, premium.
 COLLECT_KINDS_BY_TIMEFRAME = {
     '1m': ('candle',),
-    '5m': ('candle', 'ratio', 'taker', 'top_ratio', 'oi'),
+    '5m': ('candle', 'ratio', 'taker', 'top_ratio', 'top_acct_ratio', 'oi', 'premium'),
     '15m': ('candle', 'ratio', 'taker', 'top_ratio', 'oi'),
     '1h': ('candle', 'ratio', 'taker', 'top_ratio', 'oi', 'funding'),
 }
 # Metric có timestamp là THỜI ĐIỂM KẾT THÚC kỳ: giá trị được gán cho kỳ kết thúc
 # tại timestamp (chỉ được biết sau thời điểm đó -> không nhìn trước).
-END_STAMPED_KINDS = ('ratio', 'top_ratio', 'oi')
+END_STAMPED_KINDS = ('ratio', 'top_ratio', 'top_acct_ratio', 'oi')
+# Nguồn có dạng mảng kline của Binance ([open_time, open, high, low, close, ...]).
+KLINE_KINDS = ('candle', 'premium')
 METRIC_FIELDS = {
     'ratio': ('longShortRatio', 'longAccount', 'shortAccount'),
     'top_ratio': ('longShortRatio', 'longAccount', 'shortAccount'),
+    'top_acct_ratio': ('longShortRatio', 'longAccount', 'shortAccount'),
     'taker': ('buySellRatio', 'buyVol', 'sellVol'),
     'oi': ('sumOpenInterest', 'sumOpenInterestValue'),
     'funding': ('fundingRate', 'markPrice'),
@@ -96,6 +104,16 @@ def candle(tf, row, source, mode, received=None):
     return envelope('candle', tf, start, data, source, mode, row, received)
 
 
+def premium(tf, row, source, mode, received=None):
+    # Nến premium index (giá mark - index, tỷ lệ) có thể âm; không có volume.
+    start = int(row[0])
+    if int(row[6]) + 1 != start + INTERVALS[tf]:
+        raise ValueError('unexpected premium close time')
+    data = {name: number(value) for name, value in zip(('open', 'high', 'low', 'close'), row[1:5])}
+    data['source_timestamp_ms'] = start
+    return envelope('premium', tf, start, data, source, mode, row, received)
+
+
 def metric(kind, tf, row, source, mode, received=None):
     # Các metric dùng dict JSON thay vì mảng kline. ratio / top_ratio / oi có
     # timestamp là thời điểm kết thúc kỳ, taker dùng thời điểm bắt đầu kỳ.
@@ -138,13 +156,17 @@ def validate(e):
             raise ValueError('invalid candle number')
         if min(o, h, l, c) <= 0 or v < 0 or l > min(o, c) or h < max(o, c) or l > h:
             raise ValueError('invalid OHLCV')
-    elif e['kind'] in ('ratio', 'top_ratio', 'taker', 'oi'):
+    elif e['kind'] == 'premium':
+        o, h, l, c = (Decimal(d[k]) for k in ('open', 'high', 'low', 'close'))
+        if not all(x.is_finite() and abs(x) < Decimal('0.1') for x in (o, h, l, c)) or l > h:
+            raise ValueError('invalid premium index')
+    elif e['kind'] in ('ratio', 'top_ratio', 'top_acct_ratio', 'taker', 'oi'):
         # Các metric là tỷ lệ/khối lượng nên không được âm; longAccount và
         # shortAccount phải nằm trong [0,1] và tổng xấp xỉ 1.
         vals = [Decimal(d[k]) for k in METRIC_FIELDS[e['kind']]]
         if any(not x.is_finite() or x < 0 for x in vals):
             raise ValueError('invalid metric')
-        if e['kind'] in ('ratio', 'top_ratio') and (vals[1] > 1 or vals[2] > 1 or abs(vals[1] + vals[2] - 1) > Decimal('0.001')):
+        if e['kind'] in ('ratio', 'top_ratio', 'top_acct_ratio') and (vals[1] > 1 or vals[2] > 1 or abs(vals[1] + vals[2] - 1) > Decimal('0.001')):
             raise ValueError('invalid account fractions')
     elif e['kind'] == 'funding':
         # Funding rate có thể âm; chỉ cần hữu hạn và trong biên hợp lý (|rate| < 5%).
