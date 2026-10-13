@@ -1,0 +1,469 @@
+<title>BTC H1 Nhật Ký Lệnh</title>
+<meta name="description" content="Kết quả công khai của chiến lược BTCUSDT H1: lệnh đang mở, lịch sử lệnh, lợi nhuận và sụt giảm theo % tài khoản.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Be+Vietnam+Pro:wght@400;500;600&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Bố cục: sổ lệnh một cột. Dải trạng thái -> số liệu chính -> đường vốn + sụt giảm -> lệnh mở / theo tháng -> sổ lệnh đầy đủ -> nhật ký tín hiệu -> backtest tham khảo -> cách hoạt động & kiểm chứng */
+:root {
+  --bg: #f2f3f5;
+  --surface: #fcfcfb;
+  --fg: #0b0b0b;
+  --muted: #52514e;
+  --faint: #8a8984;
+  --line: #e2e3e0;
+  --grid: #ecedea;
+  --gain: #2a78d6;
+  --gain-wash: rgba(42, 120, 214, .12);
+  --loss: #d03b3b;
+  --loss-wash: rgba(208, 59, 59, .12);
+  --good: #0ca30c;
+  --warn: #b97f00;
+  --chip: #e9eaec;
+  --banner: #fff4d6;
+  --banner-fg: #5a4300;
+  --display: "Bricolage Grotesque", "Be Vietnam Pro", system-ui, sans-serif;
+  --body: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Roboto Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111213; --surface: #1a1a19; --fg: #f0efec; --muted: #c3c2b7; --faint: #8f8e87; --line: #2e2e2c;
+    --grid: #252524; --gain: #3987e5; --gain-wash: rgba(57, 135, 229, .16); --loss: #e66767;
+    --loss-wash: rgba(230, 103, 103, .16); --good: #2fbf2f; --warn: #e0a400; --chip: #262625;
+    --banner: #3a3015; --banner-fg: #f3dd9c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111213; --surface: #1a1a19; --fg: #f0efec; --muted: #c3c2b7; --faint: #8f8e87; --line: #2e2e2c;
+  --grid: #252524; --gain: #3987e5; --gain-wash: rgba(57, 135, 229, .16); --loss: #e66767;
+  --loss-wash: rgba(230, 103, 103, .16); --good: #2fbf2f; --warn: #e0a400; --chip: #262625;
+  --banner: #3a3015; --banner-fg: #f3dd9c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 28px 20px 64px; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h1 { font-size: clamp(28px, 4.4vw, 44px); line-height: 1.05; font-weight: 700; }
+h2 { font-size: 22px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 600; font-family: var(--body); }
+p { margin: 0; }
+a { color: var(--gain); }
+.num, td.n, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+
+/* đầu trang */
+header.top { display: grid; gap: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; color: var(--muted); font-size: 14px; }
+.pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; background: var(--chip); font-size: 13px; font-weight: 600; color: var(--fg); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.pill.ok .dot { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); }
+.pill.stale .dot { background: var(--warn); }
+.banner { background: var(--banner); color: var(--banner-fg); border-radius: 10px; padding: 12px 14px; font-size: 14px; }
+.lead { max-width: 68ch; color: var(--muted); }
+
+/* số liệu chính */
+.figures { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.fig { padding: 16px 18px; display: grid; gap: 4px; border-left: 1px solid var(--line); min-width: 0; }
+.fig:first-child { border-left: 0; }
+.fig .v { font-family: var(--display); font-size: 30px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.fig .v.big { font-size: 38px; }
+.fig .k { font-size: 13px; color: var(--muted); }
+.fig .s { font-size: 12px; color: var(--faint); }
+.up { color: var(--gain); } .down { color: var(--loss); }
+@media (max-width: 900px) { .figures { grid-template-columns: repeat(3, minmax(0, 1fr)); } .fig:nth-child(4) { border-left: 0; } .fig:nth-child(n+4) { border-top: 1px solid var(--line); } }
+@media (max-width: 520px) { .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fig { border-left: 1px solid var(--line); } .fig:nth-child(odd) { border-left: 0; } .fig:nth-child(n+3) { border-top: 1px solid var(--line); } }
+
+/* khung */
+section.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: grid; gap: 14px; min-width: 0; }
+.head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* biểu đồ */
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { font-family: var(--mono); font-size: 11px; fill: var(--faint); }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.12); min-width: 150px; z-index: 2; }
+.tip .t { color: var(--muted); margin-bottom: 4px; }
+.tip .r { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.tip .r b { font-family: var(--mono); font-weight: 500; }
+.tip .key { width: 12px; height: 2px; border-radius: 2px; flex: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+
+/* bảng */
+.tablewrap { overflow-x: auto; margin: 0 -4px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); letter-spacing: .02em; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 9px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+td.n, th.n { text-align: right; }
+tbody tr:hover td { background: color-mix(in srgb, var(--chip) 55%, transparent); }
+.side { font-weight: 600; font-size: 12px; letter-spacing: .04em; }
+.res { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.res svg { width: 14px; height: 14px; flex: none; }
+.empty { padding: 22px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+.chips button[aria-pressed="true"] { background: var(--fg); color: var(--surface); border-color: var(--fg); }
+.chips button:focus-visible, .more:focus-visible, .copy:focus-visible { outline: 2px solid var(--gain); outline-offset: 2px; }
+.more { justify-self: start; font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+.hash { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+
+/* theo tháng */
+.months { display: grid; gap: 6px; }
+.mrow { display: grid; grid-template-columns: 70px minmax(0, 1fr) 72px; align-items: center; gap: 10px; font-size: 13px; }
+.mbar { position: relative; height: 18px; }
+.mbar .zero { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--line); }
+.mbar .b { position: absolute; top: 2px; height: 14px; border-radius: 3px; }
+
+/* giải thích */
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px 24px; }
+.rules div { display: grid; gap: 4px; }
+.rules b { font-family: var(--display); font-size: 17px; }
+.verify { display: grid; gap: 8px; }
+.verify code { font-family: var(--mono); font-size: 12px; word-break: break-all; background: var(--chip); padding: 8px 10px; border-radius: 8px; }
+.copy { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; justify-self: start; }
+footer { color: var(--faint); font-size: 13px; display: grid; gap: 6px; max-width: 80ch; }
+@media (prefers-reduced-motion: no-preference) { .fade { animation: fade .4s ease both; } @keyframes fade { from { opacity: .4; } to { opacity: 1; } } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">BTCUSDT Futures · khung 1 giờ · lệnh mô phỏng (paper)</div>
+    <h1>Nhật ký lệnh chiến lược BTC H1</h1>
+    <div class="meta">
+      <span class="pill" id="status"><span class="dot"></span><span id="status-text">Đang tải…</span></span>
+      <span id="since"></span>
+      <span id="updated"></span>
+    </div>
+    <div class="banner" id="demo" hidden>Đây là bản xem trước với <b>dữ liệu minh hoạ</b> (một tuần năm 2026 chạy lại trên dữ liệu lịch sử), chưa phải kết quả forward test.</div>
+    <p class="lead">Mọi lệnh do hệ thống tự ra quyết định mỗi giờ đều được ghi lại ở đây, kể cả lệnh thua và tín hiệu bị bỏ qua. Lãi lỗ tính theo phần trăm tài khoản, đã trừ phí giao dịch, với mức rủi ro <span id="risk-lead">1%</span> tài khoản cho mỗi lệnh.</p>
+  </header>
+
+  <div class="figures" id="figures" aria-label="Số liệu chính"></div>
+
+  <section class="card">
+    <div class="head">
+      <h2>Tăng trưởng tài khoản</h2>
+      <div class="legend"><span><i style="background:var(--gain)"></i>Lợi nhuận luỹ kế (%)</span><span><i style="background:var(--loss)"></i>Sụt giảm từ đỉnh (%)</span></div>
+    </div>
+    <div class="chart" id="eq-chart"></div>
+    <div class="chart" id="dd-chart"></div>
+    <p class="small muted">Mỗi điểm là một lệnh vừa đóng. Sụt giảm là phần tài khoản bị mất tính từ mức cao nhất trước đó.</p>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <div class="head"><h2>Lệnh đang mở</h2><span class="small muted" id="open-note"></span></div>
+      <div id="open"></div>
+    </section>
+    <section class="card">
+      <div class="head"><h2>Lợi nhuận theo tháng</h2><span class="small muted">% tài khoản</span></div>
+      <div class="months" id="months"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="head">
+      <h2>Lịch sử lệnh</h2>
+      <div class="chips" role="group" aria-label="Lọc lệnh">
+        <button type="button" id="f-all" aria-pressed="true" data-f="all">Tất cả</button>
+        <button type="button" id="f-win" aria-pressed="false" data-f="win">Lệnh lãi</button>
+        <button type="button" id="f-loss" aria-pressed="false" data-f="loss">Lệnh lỗ</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Đóng lúc</th><th>Hướng</th><th class="n">Giá vào</th><th class="n">Giá thoát</th><th>Kết quả</th><th class="n">Lãi / lỗ</th><th class="n">Giữ lệnh</th></tr></thead>
+      <tbody id="trades"></tbody>
+    </table></div>
+    <button type="button" class="more" id="trades-more" hidden>Xem thêm</button>
+  </section>
+
+  <section class="card">
+    <div class="head">
+      <h2>Nhật ký tín hiệu theo giờ</h2>
+      <span class="small muted" id="sig-note"></span>
+    </div>
+    <p class="small muted">Mỗi giờ model đánh giá thị trường một lần. Phần lớn các giờ không có tín hiệu; chỉ những giờ đủ điều kiện mới vào lệnh.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Giờ (nến 1h)</th><th class="n">Xác suất biến động</th><th class="n">Xác suất tăng</th><th>Quyết định</th><th>Mã kiểm chứng</th></tr></thead>
+      <tbody id="signals"></tbody>
+    </table></div>
+    <button type="button" class="more" id="sig-more" hidden>Xem thêm</button>
+  </section>
+
+  <section class="card" id="bt-card" hidden>
+    <div class="head"><h2>Tham khảo: kiểm thử trên dữ liệu quá khứ</h2><span class="small muted" id="bt-range"></span></div>
+    <p class="small muted" id="bt-note"></p>
+    <div class="chart" id="bt-chart"></div>
+    <div class="tablewrap"><table><thead><tr><th>Năm</th><th class="n">Lợi nhuận</th><th class="n">Số lệnh</th></tr></thead><tbody id="bt-years"></tbody></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Hệ thống giao dịch thế nào</h2>
+    <div class="rules" id="rules"></div>
+  </section>
+
+  <section class="card verify">
+    <h2>Kiểm chứng</h2>
+    <p class="small muted">Mỗi giờ, kết quả đánh giá được nối vào một chuỗi mã băm (SHA-256): mã của giờ sau được tính từ mã của giờ trước cộng nội dung tín hiệu. Sửa hay xoá bất kỳ tín hiệu cũ nào đều làm đổi toàn bộ các mã phía sau. Dữ liệu trang này được lưu theo từng lần cập nhật, có dấu thời gian công khai.</p>
+    <div class="small">Mã mới nhất của chuỗi:</div>
+    <code id="chain">—</code>
+    <button type="button" class="copy" id="copy-chain">Sao chép mã</button>
+    <p class="small" id="repo"></p>
+  </section>
+
+  <footer>
+    <p>Đây là kết quả lệnh mô phỏng (paper trading) trên giá thật của Binance, không phải tài khoản tiền thật và không phải lời khuyên đầu tư. Kết quả quá khứ không đảm bảo kết quả tương lai. Giao dịch hợp đồng tương lai có rủi ro mất vốn.</p>
+    <p>Thời gian hiển thị theo giờ Việt Nam (UTC+7).</p>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const TZ = 'Asia/Ho_Chi_Minh';
+  const nf = (d) => new Intl.NumberFormat('vi-VN', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const fmtPct = (x, d = 2, sign = true) => x == null ? '—' : (sign && x > 0 ? '+' : '') + nf(d).format(x) + '%';
+  const fmtPx = (x) => x == null ? '—' : nf(1).format(x);
+  const dtf = new Intl.DateTimeFormat('vi-VN', { timeZone: TZ, hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
+  const dshort = new Intl.DateTimeFormat('vi-VN', { timeZone: TZ, day: '2-digit', month: '2-digit' });
+  const hm = new Intl.DateTimeFormat('vi-VN', { timeZone: TZ, hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+  const T = (iso) => iso ? new Date(iso) : null;
+  const fmtT = (iso) => iso ? hm.format(T(iso)) : '—';
+  const hold = (m) => m >= 1440 ? `${Math.floor(m / 1440)} ngày ${Math.floor(m % 1440 / 60)} giờ` : m >= 60 ? `${Math.floor(m / 60)} giờ ${m % 60} phút` : `${m} phút`;
+  const el = (tag, attrs = {}, text) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text != null) e.textContent = text; return e; };
+  const SVG = 'http://www.w3.org/2000/svg';
+  const sv = (tag, attrs = {}) => { const e = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+  const RESULT = {
+    TP: { label: 'Chốt lời', color: 'var(--gain)', icon: '<path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' },
+    SL: { label: 'Cắt lỗ', color: 'var(--loss)', icon: '<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' },
+    ANOMALY: { label: 'Thoát sớm', color: 'var(--warn)', icon: '<path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" fill="currentColor"/>' },
+    TIMEOUT: { label: 'Hết hạn giữ', color: 'var(--muted)', icon: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 5v3.2l2 1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' },
+  };
+  const resultEl = (r) => {
+    const m = RESULT[r] || { label: r, color: 'var(--muted)', icon: '' };
+    const s = el('span', { class: 'res' });
+    s.style.color = m.color;
+    s.insertAdjacentHTML('beforeend', `<svg viewBox="0 0 16 16" aria-hidden="true">${m.icon}</svg>`);
+    const t = el('span', {}, m.label); t.style.color = 'var(--fg)'; s.append(t);
+    return s;
+  };
+  const sideEl = (s) => { const e = el('span', { class: 'side' }, s === 'LONG' ? 'MUA' : s === 'SHORT' ? 'BÁN' : '—'); e.style.color = s === 'LONG' ? 'var(--gain)' : s === 'SHORT' ? 'var(--loss)' : 'var(--muted)'; return e; };
+  const pctEl = (x, d = 2) => { const e = el('span', {}, fmtPct(x, d)); if (x != null) e.className = x > 0 ? 'up' : x < 0 ? 'down' : ''; return e; };
+
+  /* ---------- biểu đồ đường (một chuỗi) ---------- */
+  function areaChart(host, pts, o) {
+    host.replaceChildren();
+    if (!pts || pts.length < 2) { host.append(el('div', { class: 'empty' }, o.empty || 'Chưa có đủ dữ liệu để vẽ.')); return; }
+    const W = 1000, H = o.h, L = 52, R = 14, Tp = 10, B = 24;
+    const xs = pts.map(p => +T(p.t)), ys = pts.map(p => p[o.key]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    let y0 = Math.min(0, ...ys), y1 = Math.max(0, ...ys);
+    if (y1 - y0 < 1e-9) { y1 += 1; y0 -= o.neg ? 1 : 0; }
+    const pad = (y1 - y0) * 0.08; if (!o.neg) y1 += pad; y0 -= o.neg ? pad : (y0 < 0 ? pad : 0);
+    const X = (v) => L + (v - x0) / Math.max(1, x1 - x0) * (W - L - R);
+    const Y = (v) => Tp + (y1 - v) / (y1 - y0) * (H - Tp - B);
+    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': o.aria });
+    const ticks = niceTicks(y0, y1, o.neg ? 3 : 4);
+    for (const t of ticks) {
+      svg.append(sv('line', { x1: L, x2: W - R, y1: Y(t), y2: Y(t), stroke: t === 0 ? 'var(--line)' : 'var(--grid)', 'stroke-width': 1 }));
+      const lab = sv('text', { x: L - 8, y: Y(t) + 4, 'text-anchor': 'end' }); lab.textContent = fmtPct(t, Math.abs(t) < 10 && ticks.some(v => v % 1) ? 1 : 0, false); svg.append(lab);
+    }
+    const xt = timeTicks(x0, x1, 5);
+    for (const t of xt) { const lab = sv('text', { x: X(t), y: H - 6, 'text-anchor': 'middle' }); lab.textContent = o.yearTicks ? new Date(t).getUTCFullYear() : (x1 - x0 < 4 * 864e5 ? hm.format(new Date(t)) : dshort.format(new Date(t))); svg.append(lab); }
+    let d = ''; pts.forEach((p, i) => { d += (i ? 'L' : 'M') + X(xs[i]).toFixed(1) + ',' + Y(ys[i]).toFixed(1); });
+    const area = d + `L${X(xs[xs.length - 1]).toFixed(1)},${Y(0).toFixed(1)}L${X(xs[0]).toFixed(1)},${Y(0).toFixed(1)}Z`;
+    svg.append(sv('path', { d: area, fill: o.wash, stroke: 'none' }));
+    svg.append(sv('path', { d, fill: 'none', stroke: o.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke' }));
+    const last = pts.length - 1;
+    svg.append(sv('circle', { cx: X(xs[last]), cy: Y(ys[last]), r: 4, fill: o.color, stroke: 'var(--surface)', 'stroke-width': 2 }));
+    const cross = sv('line', { y1: Tp, y2: H - B, stroke: 'var(--muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' });
+    const mark = sv('circle', { r: 4.5, fill: o.color, stroke: 'var(--surface)', 'stroke-width': 2, visibility: 'hidden' });
+    svg.append(cross, mark);
+    const hit = sv('rect', { x: L, y: 0, width: W - L - R, height: H, fill: 'transparent', tabindex: 0 });
+    svg.append(hit);
+    host.append(svg);
+    const tip = el('div', { class: 'tip', hidden: '' }); host.append(tip);
+    const show = (i) => {
+      const p = pts[i]; cross.setAttribute('x1', X(xs[i])); cross.setAttribute('x2', X(xs[i]));
+      mark.setAttribute('cx', X(xs[i])); mark.setAttribute('cy', Y(ys[i]));
+      cross.setAttribute('visibility', 'visible'); mark.setAttribute('visibility', 'visible');
+      tip.replaceChildren(el('div', { class: 't' }, dtf.format(T(p.t))));
+      for (const r of o.rows) {
+        const row = el('div', { class: 'r' }); const k = el('span', { class: 'key' }); k.style.background = r.color;
+        const lab = el('span', {}, r.label); const v = el('b', {}, fmtPct(p[r.key], 2));
+        const left = el('span', { class: 'r' }); left.style.justifyContent = 'flex-start'; left.append(k, lab); row.append(left, v); tip.append(row);
+      }
+      tip.hidden = false;
+      const bw = host.clientWidth, px = X(xs[i]) / W * bw;
+      tip.style.left = Math.min(Math.max(0, px + 12), bw - tip.offsetWidth) + 'px'; tip.style.top = '4px';
+    };
+    const near = (cx) => { const rect = svg.getBoundingClientRect(); const v = x0 + ((cx - rect.left) / rect.width * W - L) / (W - L - R) * (x1 - x0); let b = 0; for (let i = 1; i < xs.length; i++) if (Math.abs(xs[i] - v) < Math.abs(xs[b] - v)) b = i; return b; };
+    let cur = last;
+    hit.addEventListener('pointermove', (e) => { cur = near(e.clientX); show(cur); });
+    hit.addEventListener('pointerleave', () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); mark.setAttribute('visibility', 'hidden'); });
+    hit.addEventListener('focus', () => show(cur));
+    hit.addEventListener('blur', () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); mark.setAttribute('visibility', 'hidden'); });
+    hit.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') { cur = Math.min(last, cur + 1); show(cur); e.preventDefault(); } if (e.key === 'ArrowLeft') { cur = Math.max(0, cur - 1); show(cur); e.preventDefault(); } });
+  }
+  function niceTicks(a, b, n) {
+    const raw = (b - a) / n, mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / mag;
+    const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+    const out = []; for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) out.push(Math.round(v / step) * step);
+    return out;
+  }
+  function timeTicks(a, b, n) { const out = []; for (let i = 0; i <= n; i++) out.push(a + (b - a) * i / n); return out.slice(0, n).concat([b]).filter((v, i, arr) => i === 0 || v - arr[i - 1] > (b - a) / (n * 1.6)); }
+
+  /* ---------- các phần ---------- */
+  function figures(d) {
+    const s = d.summary, f = document.getElementById('figures'); f.replaceChildren();
+    const items = [
+      ['Lợi nhuận tài khoản', fmtPct(s.total_ret, 2), s.total_ret > 0 ? 'up' : s.total_ret < 0 ? 'down' : '', `từ ${d.since ? dshort.format(T(d.since)) : '—'}`, true],
+      ['Sụt giảm lớn nhất', s.max_dd ? fmtPct(-s.max_dd, 2, false) : '0%', s.max_dd > 0 ? 'down' : '', 'tính từ đỉnh tài khoản'],
+      ['Tỉ lệ lệnh lãi', s.win_rate == null ? '—' : nf(1).format(s.win_rate) + '%', '', `${s.wins} lãi · ${s.losses} lỗ`],
+      ['Số lệnh đã đóng', String(s.trades), '', `${s.open} lệnh đang mở`],
+      ['Lãi / lỗ trung bình', `${fmtPct(s.avg_win, 2)}`, 'up', `lệnh lỗ TB ${fmtPct(s.avg_loss, 2)}`],
+      ['Chuỗi thua dài nhất', `${s.max_losing_streak} lệnh`, '', `lệnh tệ nhất ${fmtPct(s.worst, 2)}`],
+    ];
+    for (const [k, v, cls, sub, big] of items) {
+      const box = el('div', { class: 'fig' });
+      box.append(el('div', { class: 'k' }, k));
+      const vv = el('div', { class: 'v' + (big ? ' big' : '') + (cls ? ' ' + cls : '') }, v); box.append(vv);
+      box.append(el('div', { class: 's' }, sub)); f.append(box);
+    }
+  }
+  function openTrades(d) {
+    const host = document.getElementById('open'); host.replaceChildren();
+    document.getElementById('open-note').textContent = `tối đa ${d.rules.max_positions} lệnh cùng lúc`;
+    if (!d.open.length) { host.append(el('div', { class: 'empty' }, 'Hiện không có lệnh nào đang mở. Lệnh mới sẽ xuất hiện ở đây ngay khi hệ thống vào lệnh.')); return; }
+    const wrap = el('div', { class: 'tablewrap' }), t = el('table');
+    t.innerHTML = '<thead><tr><th>Vào lúc</th><th>Hướng</th><th class="n">Giá vào</th><th class="n">Chốt lời</th><th class="n">Cắt lỗ</th><th class="n">Tạm tính</th></tr></thead>';
+    const tb = el('tbody');
+    for (const o of d.open) {
+      const tr = el('tr');
+      tr.append(el('td', {}, o.status === 'Chờ khớp' ? 'Chờ khớp lệnh' : fmtT(o.entry_time)));
+      const s = el('td'); s.append(sideEl(o.side)); tr.append(s);
+      tr.append(el('td', { class: 'n' }, fmtPx(o.entry)), el('td', { class: 'n' }, fmtPx(o.tp)), el('td', { class: 'n' }, fmtPx(o.sl)));
+      const u = el('td', { class: 'n' }); u.append(pctEl(o.unrealized_pct)); tr.append(u); tb.append(tr);
+    }
+    t.append(tb); wrap.append(t); host.append(wrap);
+  }
+  function months(d) {
+    const host = document.getElementById('months'); host.replaceChildren();
+    if (!d.monthly.length) { host.append(el('div', { class: 'empty' }, 'Chưa có tháng nào có lệnh đóng.')); return; }
+    const mx = Math.max(1, ...d.monthly.map(m => Math.abs(m.ret)));
+    for (const m of d.monthly.slice().reverse()) {
+      const row = el('div', { class: 'mrow' });
+      const [y, mo] = m.month.split('-'); row.append(el('span', { class: 'mono small' }, `${mo}/${y}`));
+      const bar = el('div', { class: 'mbar', title: `${m.trades} lệnh, ${m.wins} lãi` }); bar.append(el('div', { class: 'zero' }));
+      const b = el('div', { class: 'b' }); const w = Math.abs(m.ret) / mx * 50;
+      b.style.width = Math.max(w, 0.6) + '%'; b.style.left = m.ret >= 0 ? '50%' : (50 - w) + '%';
+      b.style.background = m.ret >= 0 ? 'var(--gain)' : 'var(--loss)'; bar.append(b); row.append(bar);
+      const v = el('span', { class: 'mono small' }); v.style.textAlign = 'right'; v.append(pctEl(m.ret)); row.append(v);
+      host.append(row);
+    }
+  }
+  let tradeFilter = 'all', tradeShown = 30;
+  function trades(d) {
+    const tb = document.getElementById('trades'); tb.replaceChildren();
+    const list = d.trades.filter(t => tradeFilter === 'all' || (tradeFilter === 'win' ? t.pnl_pct > 0 : t.pnl_pct <= 0));
+    if (!list.length) { const tr = el('tr'); const td = el('td', { colspan: 7 }); td.append(el('div', { class: 'empty' }, d.trades.length ? 'Không có lệnh nào khớp bộ lọc.' : 'Chưa có lệnh nào đóng.')); tr.append(td); tb.append(tr); }
+    for (const t of list.slice(0, tradeShown)) {
+      const tr = el('tr');
+      tr.append(el('td', {}, fmtT(t.exit_time)));
+      const s = el('td'); s.append(sideEl(t.side)); tr.append(s);
+      tr.append(el('td', { class: 'n' }, fmtPx(t.entry)), el('td', { class: 'n' }, fmtPx(t.exit)));
+      const r = el('td'); r.append(resultEl(t.result)); tr.append(r);
+      const p = el('td', { class: 'n' }); p.append(pctEl(t.pnl_pct)); tr.append(p);
+      tr.append(el('td', { class: 'n' }, hold(t.hold_min))); tb.append(tr);
+    }
+    const more = document.getElementById('trades-more'); more.hidden = list.length <= tradeShown;
+    more.textContent = `Xem thêm (${list.length - tradeShown} lệnh)`;
+  }
+  let sigShown = 24;
+  function signals(d) {
+    const S = d.signals; document.getElementById('sig-note').textContent = `${S.count} giờ đã đánh giá · ${S.with_signal} có tín hiệu · ${S.entered} đã vào lệnh`;
+    const tb = document.getElementById('signals'); tb.replaceChildren();
+    const why = { max_positions: 'bỏ qua, đã đủ số lệnh tối đa', late: 'bỏ qua, ra quyết định quá trễ', min_gap: 'bỏ qua, quá gần lệnh trước', no_data: 'không tính được, thiếu dữ liệu' };
+    for (const s of S.recent.slice(0, sigShown)) {
+      const tr = el('tr');
+      tr.append(el('td', {}, fmtT(s.hour)));
+      tr.append(el('td', { class: 'n' }, s.p_touch == null ? '—' : nf(0).format(s.p_touch * 100) + '%'));
+      tr.append(el('td', { class: 'n' }, s.p_up == null ? '—' : nf(0).format(s.p_up * 100) + '%'));
+      const dc = el('td');
+      if (s.entered) { dc.append(sideEl(s.side), document.createTextNode(' vào lệnh')); }
+      else if (s.signal) { dc.append(sideEl(s.side), document.createTextNode(' ' + (why[s.skip] || 'bỏ qua'))); }
+      else { const m = el('span', { class: 'muted' }, s.skip === 'no_data' ? why.no_data : 'không có tín hiệu'); dc.append(m); }
+      tr.append(dc); tr.append(el('td', { class: 'hash', title: s.hash }, s.hash.slice(0, 12))); tb.append(tr);
+    }
+    const more = document.getElementById('sig-more'); more.hidden = S.recent.length <= sigShown;
+    more.textContent = 'Xem thêm giờ trước';
+  }
+  function backtest(d) {
+    const b = d.backtest, card = document.getElementById('bt-card'); if (!b) { card.hidden = true; return; } card.hidden = false;
+    document.getElementById('bt-range').textContent = `${dshort.format(T(b.from))}/${T(b.from).getUTCFullYear()} – ${dshort.format(T(b.to))}/${T(b.to).getUTCFullYear()}`;
+    document.getElementById('bt-note').textContent = `Cùng luật giao dịch, chạy lại trên dữ liệu ${T(b.from).getUTCFullYear()}–${T(b.to).getUTCFullYear()}: ${b.trades} lệnh, ${nf(1).format(b.win_rate)}% lệnh lãi, lợi nhuận ${fmtPct(b.total_ret, 1)}, sụt giảm lớn nhất ${nf(1).format(b.max_dd)}%. Một phần thông số được chọn khi đã nhìn thấy dữ liệu này, nên kết quả kiểm thử có thể đẹp hơn thực tế; số liệu đáng tin là nhật ký lệnh thật ở trên.`;
+    areaChart(document.getElementById('bt-chart'), b.points, { key: 'ret', h: 220, color: 'var(--faint)', wash: 'color-mix(in srgb, var(--faint) 14%, transparent)', aria: 'Đường vốn kiểm thử quá khứ', yearTicks: true, rows: [{ key: 'ret', label: 'Lợi nhuận luỹ kế', color: 'var(--faint)' }, { key: 'dd', label: 'Sụt giảm', color: 'var(--loss)' }] });
+    const tb = document.getElementById('bt-years'); tb.replaceChildren();
+    for (const y of b.years) { const tr = el('tr'); tr.append(el('td', {}, y.year)); const v = el('td', { class: 'n' }); v.append(pctEl(y.ret, 1)); tr.append(v, el('td', { class: 'n' }, String(y.trades))); tb.append(tr); }
+  }
+  function rules(d) {
+    const r = d.rules, host = document.getElementById('rules'); host.replaceChildren();
+    const win = r.risk_pct * r.tp_mult / r.sl_mult;
+    const items = [
+      ['Mỗi giờ một lần', 'Khi nến 1 giờ đóng, model ước lượng khả năng giá BTC biến động mạnh trong 8 giờ tới và hướng có khả năng xảy ra hơn, dựa trên giá và vị thế của thị trường phái sinh.'],
+      ['Chỉ vào lệnh khi đủ chắc', 'Phần lớn các giờ không có tín hiệu. Chỉ vào lệnh khi cả khả năng biến động lẫn độ tự tin về hướng thuộc nhóm cao nhất.'],
+      [`Rủi ro ${nf(0).format(r.risk_pct)}% mỗi lệnh`, `Chạm cắt lỗ mất khoảng ${nf(1).format(r.risk_pct)}% tài khoản; chạm chốt lời được khoảng ${nf(1).format(win)}%, trước phí giao dịch ${nf(2).format(r.fee_pct)}% mỗi lượt vào ra.`],
+      ['Thoát sớm khi bất thường', `Nếu một nến 5 phút chạy ngược hướng lệnh với biên độ từ ${nf(2).format(r.anomaly_pct)}% trở lên, lệnh được đóng ngay để giảm lỗ.`],
+      [`Tối đa ${r.max_positions} lệnh cùng lúc`, `Mỗi lệnh có điểm chốt lời và cắt lỗ riêng, giữ tối đa ${r.max_hold_days} ngày.`],
+      ['Không chỉnh sửa sau', 'Lệnh được ghi lại ngay khi ra quyết định. Trang này cập nhật tự động; không có lệnh nào bị ẩn hay xoá.'],
+    ];
+    for (const [k, v] of items) { const b = el('div'); b.append(el('b', {}, k), el('p', { class: 'small muted' }, v)); host.append(b); }
+    document.getElementById('risk-lead').textContent = nf(0).format(r.risk_pct) + '%';
+  }
+  function render(d) {
+    document.getElementById('demo').hidden = !d.demo;
+    const st = document.getElementById('status');
+    st.className = 'pill ' + (d.running ? 'ok' : 'stale');
+    document.getElementById('status-text').textContent = d.running ? 'Đang chạy' : 'Tạm dừng cập nhật';
+    document.getElementById('since').textContent = d.since ? `Bắt đầu theo dõi ${dtf.format(T(d.since))}` : '';
+    document.getElementById('updated').textContent = `Cập nhật ${dtf.format(T(d.generated_at))}`;
+    figures(d);
+    areaChart(document.getElementById('eq-chart'), d.equity, { key: 'ret', h: 260, color: 'var(--gain)', wash: 'var(--gain-wash)', aria: 'Lợi nhuận luỹ kế theo % tài khoản', empty: 'Đường vốn sẽ hiện khi có lệnh đầu tiên đóng.', rows: [{ key: 'ret', label: 'Lợi nhuận luỹ kế', color: 'var(--gain)' }, { key: 'dd', label: 'Sụt giảm', color: 'var(--loss)' }] });
+    areaChart(document.getElementById('dd-chart'), d.equity, { key: 'dd', h: 120, neg: true, color: 'var(--loss)', wash: 'var(--loss-wash)', aria: 'Sụt giảm từ đỉnh theo % tài khoản', empty: ' ', rows: [{ key: 'dd', label: 'Sụt giảm', color: 'var(--loss)' }, { key: 'ret', label: 'Lợi nhuận luỹ kế', color: 'var(--gain)' }] });
+    openTrades(d); months(d); trades(d); signals(d); backtest(d); rules(d);
+    document.getElementById('chain').textContent = d.signals.chain_head || '—';
+    const repo = document.getElementById('repo'); repo.replaceChildren();
+    if (d.repo_url) { repo.append(document.createTextNode('Lịch sử cập nhật công khai: ')); const a = el('a', { href: d.repo_url, target: '_blank', rel: 'noopener' }, d.repo_url.replace(/^https:\/\//, '')); repo.append(a); }
+    document.querySelectorAll('.card, .figures').forEach(n => n.classList.add('fade'));
+  }
+  let DATA = null;
+  document.querySelectorAll('.chips button').forEach(b => b.addEventListener('click', () => {
+    tradeFilter = b.dataset.f; tradeShown = 30;
+    document.querySelectorAll('.chips button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    if (DATA) trades(DATA);
+  }));
+  document.getElementById('trades-more').addEventListener('click', () => { tradeShown += 50; trades(DATA); });
+  document.getElementById('sig-more').addEventListener('click', () => { sigShown += 48; signals(DATA); });
+  document.getElementById('copy-chain').addEventListener('click', async (e) => {
+    const code = document.getElementById('chain');
+    try { await navigator.clipboard.writeText(code.textContent); e.target.textContent = 'Đã sao chép'; }
+    catch { const r = document.createRange(); r.selectNodeContents(code); const s = getSelection(); s.removeAllRanges(); s.addRange(r); e.target.textContent = 'Đã chọn mã, nhấn Ctrl+C'; }
+  });
+  window.addEventListener('resize', () => { if (DATA) render(DATA); });
+  async function load() {
+    try {
+      const r = await fetch('data.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      DATA = await r.json(); render(DATA);
+    } catch (err) {
+      document.getElementById('status-text').textContent = 'Không tải được dữ liệu, thử lại sau ít phút';
+    }
+  }
+  load(); setInterval(load, 5 * 60 * 1000);
+})();
+</script>
