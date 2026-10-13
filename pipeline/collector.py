@@ -8,8 +8,8 @@ import time
 import httpx
 from websockets.asyncio.client import connect as ws_connect
 
-from .core import (COLLECT_KINDS_BY_TIMEFRAME, END_STAMPED_KINDS, INTERVALS, INSTRUMENT, RAW, candle, metric,
-                   now_ms, validate)
+from .core import (COLLECT_KINDS_BY_TIMEFRAME, END_STAMPED_KINDS, INTERVALS, INSTRUMENT, KLINE_KINDS, RAW, candle,
+                   metric, now_ms, premium, validate)
 from .kafka_io import Sender
 from .storage import connect, heartbeat
 
@@ -25,6 +25,7 @@ WS = os.getenv('BINANCE_WS_URL', 'wss://fstream.binance.com/market/stream?stream
 # dùng endpoint klines, còn ratio/taker là các endpoint thống kê futures.
 PATHS = {'candle':'/fapi/v1/klines','ratio':'/futures/data/globalLongShortAccountRatio','taker':'/futures/data/takerlongshortRatio',
          'top_ratio':'/futures/data/topLongShortPositionRatio','oi':'/futures/data/openInterestHist',
+         'top_acct_ratio':'/futures/data/topLongShortAccountRatio','premium':'/fapi/v1/premiumIndexKlines',
          'funding':'/fapi/v1/fundingRate'}
 
 
@@ -67,7 +68,7 @@ async def fetch_range(client, sender, tf, kind, start, end, mode):
         # Trừ 1 mili-giây để page_end vẫn nằm trong giới hạn trang hiện tại khi
         # endpoint được hiểu là inclusive.
         page_end = min(last, cursor + 500 * step - 1)
-        params = {'symbol':'BTCUSDT', 'interval' if kind == 'candle' else 'period':tf,
+        params = {'symbol':'BTCUSDT', 'interval' if kind in KLINE_KINDS else 'period':tf,
                   'startTime':cursor, 'endTime':page_end, 'limit':500}
         rows = await get(client, PATHS[kind], params)
         if not isinstance(rows, list):
@@ -81,12 +82,17 @@ async def fetch_range(client, sender, tf, kind, start, end, mode):
         for row in rows:
             # Bỏ các bản ghi ngoài trang đang yêu cầu (nếu API trả dư) trước khi
             # chuyển đổi, nhờ đó không phát sinh dữ liệu trùng hoặc ngoài phạm vi.
-            source_ts = int(row[0] if kind == 'candle' else row['timestamp'])
+            source_ts = int(row[0] if kind in KLINE_KINDS else row['timestamp'])
             if not cursor <= source_ts <= page_end:
                 continue
             # candle và metric có định dạng JSON khác nhau, nhưng đều được đưa
             # về cùng hợp đồng event trước khi validate và gửi vào Kafka.
-            event = candle(tf, row, BASE + PATHS[kind], mode, received) if kind == 'candle' else metric(kind, tf, row, BASE + PATHS[kind], mode, received)
+            if kind == 'candle':
+                event = candle(tf, row, BASE + PATHS[kind], mode, received)
+            elif kind == 'premium':
+                event = premium(tf, row, BASE + PATHS[kind], mode, received)
+            else:
+                event = metric(kind, tf, row, BASE + PATHS[kind], mode, received)
             if event['period_start_ms'] < start or event['period_end_ms'] > end:
                 continue
             validate(event)

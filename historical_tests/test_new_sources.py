@@ -45,41 +45,62 @@ class NewSourceTests(unittest.TestCase):
         validate(metric('funding', '1h', old, 'test', 'backfill', received=settle + 500))
 
 
-class ModelSignalTests(unittest.TestCase):
-    def test_decision_uses_executor_rule_and_past_only(self):
-        from pipeline.model_signals import decide
-        import execution_m1 as ex
-        n = 25 * 288
-        t = np.arange(n) * M5
-        hist = pd.DataFrame({'decision_ms': t, 'barrier_pct': 0.01, 'e_long_1r': np.linspace(-.1, .3, n),
-                             'e_short_1r': -0.2, 'e_long_2r': 0.0, 'e_short_2r': 0.0})
-        row = pd.Series({'timestamp': pd.Timestamp(int(t[-1]) + M5, unit='ms', tz='UTC'), 'barrier_pct': 0.01,
-                         'e_long_1r': 0.2, 'e_short_1r': -0.2, 'e_long_2r': 0.0, 'e_short_2r': 0.0})
-        absolute = ex.ExecConfig(mode='abs', min_score=0.05)
-        d = decide(hist, row, absolute)                    # score = 0.2 - 0.1 = 0.1 > 0.05
-        self.assertEqual((d['side'], d['enter']), (1, True))
-        self.assertAlmostEqual(d['score'], 0.1)
-        rolling = ex.ExecConfig(mode='rolling', top_frac=0.02)
-        self.assertFalse(decide(hist, row, rolling)['enter'])      # top 2% of history is above 0.1
-        self.assertFalse(decide(hist.iloc[:1000], row, rolling)['enter'])   # not enough history
-        later = pd.concat([hist, pd.DataFrame({'decision_ms': [int(t[-1]) + 10 * M5], 'barrier_pct': [0.01],
-                                               'e_long_1r': [9.0], 'e_short_1r': [0.0], 'e_long_2r': [0.0], 'e_short_2r': [0.0]})])
-        self.assertEqual(decide(later, row, rolling), decide(hist, row, rolling))
+class StrategySourceTests(unittest.TestCase):
+    def test_strategy_kinds_collected_on_5m(self):
+        for kind in ('oi', 'top_acct_ratio', 'top_ratio', 'ratio', 'premium', 'candle'):
+            self.assertIn(kind, COLLECT_KINDS_BY_TIMEFRAME['5m'])
 
-    def test_event_contract(self):
-        from pipeline.model_signals import to_event
-        import execution_m1 as ex
-        row = pd.Series({'timestamp': pd.Timestamp('2026-10-01 10:00', tz='UTC'), 'close': 80000.0, 'p_touch': 0.7,
-                         'p_up_touch': 0.62, 'barrier_pct': 0.009, 'e_long_1r': 0.2})
-        cfg = ex.ExecConfig()
-        ev = to_event(row, {'side': 1, 'score': 0.09, 'threshold': 0.05, 'enter': True}, cfg, 'modelv2_5m', 'b.joblib')
-        self.assertEqual(ev['event_time_ms'], int(pd.Timestamp('2026-10-01 10:05', tz='UTC').value // 1_000_000))
-        self.assertEqual(ev['decision']['side'], 'LONG')
-        self.assertTrue(ev['decision']['good'])
-        self.assertEqual(ev['decision']['execution']['max_hold_min'], 240)
-        off = to_event(row, {'side': -1, 'score': 0.01, 'threshold': 0.05, 'enter': False}, cfg, 'modelv2_5m', 'b')
-        self.assertFalse(off['decision']['good'])
-        self.assertEqual(off['decision']['side'], 'SHORT')
+    def test_top_trader_account_ratio(self):
+        ts = 10 * M5
+        row = {'symbol': 'BTCUSDT', 'longShortRatio': '1.31', 'longAccount': '0.5671', 'shortAccount': '0.4329',
+               'timestamp': ts}
+        e = metric('top_acct_ratio', '5m', row, 'test', 'backfill', received=ts + 1000)
+        validate(e)
+        self.assertEqual(e['data']['source_timestamp_ms'], ts)
+
+    def test_premium_index_kline_can_be_negative(self):
+        from pipeline.core import premium
+        t = 10 * M5
+        row = [t, '-0.00012', '0.00003', '-0.00031', '-0.00020', '0', t + M5 - 1, '0', 12, '0', '0', '0']
+        e = premium('5m', row, 'test', 'live', received=t + M5 + 1000)
+        validate(e)
+        self.assertEqual(e['period_start_ms'], t)
+        self.assertEqual(e['data']['close'], '-0.0002')
+        bad = list(row)
+        bad[3] = '0.5'
+        with self.assertRaises(ValueError):
+            validate(premium('5m', bad, 'test', 'live', received=t + M5 + 1000))
+
+    def test_rest_rows_build_training_positioning_table(self):
+        """REST (timestamp = create_time) -> cùng bảng như dữ liệu data.binance.vision sau 2024-03-04."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'model_training'))
+        import positioning_data as pdm
+        t0 = pdm.CUTOVER_MS + 100 * M5
+        grid = np.arange(t0, t0 + 10 * M5, M5)
+        ts = [t0 + i * M5 for i in range(10) if i != 4]                        # thiếu 1 dòng -> giữ giá trị cũ
+        oi = [{'timestamp': t, 'sumOpenInterest': 1000 + i, 'sumOpenInterestValue': 0} for i, t in enumerate(ts)]
+        ls = [{'timestamp': t, 'longShortRatio': 1.1} for t in ts]
+        prem = [[int(t), 0.0001, 0.0002, 0.0, 0.00015] for t in grid]
+        m = pdm.rest_metrics(oi, ls, ls, ls)
+        out = pdm.align(m, pdm.rest_premium(prem), grid)
+        self.assertEqual(list(out['open_time_ms']), list(grid))
+        self.assertEqual(out['oi'].iloc[4], out['oi'].iloc[3])
+        self.assertEqual(out['m_age_bars'].iloc[4], 1)
+        self.assertTrue((out['prem_close'] == 0.00015).all())
+        vision = pd.DataFrame({'create_ms': ts, 'oi': [r['sumOpenInterest'] for r in oi], 'oi_usd': 0,
+                               'top_acct_ls': 1.1, 'top_pos_ls': 1.1, 'acct_ls': 1.1})
+        same = pdm.align(vision, pdm.rest_premium(prem), grid)
+        pd.testing.assert_frame_equal(out, same)
+
+    def test_metric_owner_before_and_after_cutover(self):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'model_training'))
+        import positioning_data as pdm
+        c = pdm.CUTOVER_MS
+        self.assertEqual(list(pdm.metric_owner_open_ms(np.array([c - M5, c, c + M5]))), [c - 2 * M5, c, c + M5])
 
 
 if __name__ == '__main__':
