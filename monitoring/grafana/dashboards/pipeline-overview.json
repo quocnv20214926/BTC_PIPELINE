@@ -170,11 +170,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT count(*) AS \"Signals (1h)\" FROM signal_events WHERE stored_at >= now() - interval '1 hour'",
+          "rawSql": "SELECT count(*) FILTER (WHERE (payload->'decision'->>'good')::boolean) AS \"Tín hiệu H1 (24h)\" FROM signal_events WHERE source='strategy_h1' AND event_time_ms >= (extract(epoch FROM now()) * 1000 - 86400000)",
           "refId": "A"
         }
       ],
-      "title": "Signals / 1h",
+      "title": "Tín hiệu H1 / 24h",
       "type": "stat"
     },
     {
@@ -226,11 +226,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT count(*) AS \"Lệnh bot (24h)\" FROM telegram_messages WHERE kind='signal' AND sent_at >= now() - interval '24 hours'",
+          "rawSql": "SELECT count(*) AS \"Đang mở\" FROM strategy_trades WHERE source='strategy_h1' AND status IN ('PENDING','OPEN')",
           "refId": "A"
         }
       ],
-      "title": "Lệnh bot / 24h",
+      "title": "Lệnh paper đang mở",
       "type": "stat"
     },
     {
@@ -351,7 +351,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(max(extract(epoch FROM now() - updated_at)), 0) AS \"Oldest heartbeat\" FROM service_heartbeats",
+          "rawSql": "SELECT COALESCE(max(extract(epoch FROM now() - updated_at)), 0) AS \"Oldest heartbeat\" FROM service_heartbeats WHERE service IN ('collector-rest','collector-ws','writer','publisher','strategy-h1','public-site','telegram')",
           "refId": "A"
         }
       ],
@@ -434,21 +434,47 @@
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "signals",
+            "axisLabel": "xác suất",
             "axisPlacement": "auto",
-            "drawStyle": "bars",
-            "fillOpacity": 60,
-            "lineWidth": 1,
-            "pointSize": 3,
-            "showPoints": "never",
-            "spanNulls": false,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "group": "A",
-              "mode": "normal"
-            }
-          }
+              "mode": "none"
+            },
+            "lineInterpolation": "linear"
+          },
+          "min": 0,
+          "max": 1
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nguong_touch"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    6,
+                    4
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -460,7 +486,7 @@
       "options": {
         "legend": {
           "calcs": [
-            "sum"
+            "lastNotNull"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -476,11 +502,11 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(stored_at, '5m'), source AS metric, count(*) AS value FROM signal_events WHERE $__timeFilter(stored_at) GROUP BY 1, 2 ORDER BY 1",
+          "rawSql": "SELECT to_timestamp(event_time_ms/1000.0) AS time, (payload->'signal'->>'p_touch')::float AS p_touch, (payload->'signal'->>'p_up')::float AS p_up, (payload->'signal'->>'thr_touch')::float AS nguong_touch FROM signal_events WHERE source='strategy_h1' AND payload->'signal' IS NOT NULL AND $__timeFilter(to_timestamp(event_time_ms/1000.0)) ORDER BY 1",
           "refId": "A"
         }
       ],
-      "title": "Tín hiệu M1 / M5 / M15",
+      "title": "Xác suất model theo giờ (p_touch, p_lên)",
       "type": "timeseries"
     },
     {
@@ -513,7 +539,7 @@
         "sortBy": [
           {
             "desc": true,
-            "displayName": "event_time"
+            "displayName": "nen_1h"
           }
         ]
       },
@@ -522,11 +548,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT source, timeframe, to_timestamp(event_time_ms / 1000.0) AS event_time, payload->'decision'->>'side' AS side, (payload->'decision'->>'good')::boolean AS enter, round((payload->'decision'->>'score')::numeric, 4) AS expected_r, payload->'decision'->>'threshold' AS threshold, stored_at FROM latest_signals ORDER BY event_time_ms DESC",
+          "rawSql": "SELECT to_timestamp((payload->>'hour_open_ms')::bigint/1000.0) AS nen_1h, payload->'decision'->>'side' AS huong, (payload->'decision'->>'good')::boolean AS tin_hieu, payload->'decision'->>'admitted' AS vao_lenh, payload->'decision'->>'skip_reason' AS ly_do_bo, round((payload->'signal'->>'p_touch')::numeric,3) AS p_touch, round((payload->'signal'->>'p_up')::numeric,3) AS p_up, round((payload->'signal'->>'b_pct')::numeric*100,2) AS b_pct, payload->'data_quality'->>'decided_after_s' AS tre_s FROM signal_events WHERE source='strategy_h1' ORDER BY event_time_ms DESC LIMIT 48",
           "refId": "A"
         }
       ],
-      "title": "Tín hiệu mới nhất",
+      "title": "Tín hiệu H1 mới nhất",
       "type": "table"
     },
     {
@@ -536,7 +562,38 @@
       },
       "fieldConfig": {
         "defaults": {},
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "r_sau_phi"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 9,
@@ -559,7 +616,7 @@
         "sortBy": [
           {
             "desc": true,
-            "displayName": "sent_at"
+            "displayName": "thoat_luc"
           }
         ]
       },
@@ -568,11 +625,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT sent_at, payload->>'side' AS side, payload->'outcome'->>'status' AS result, round((payload->'outcome'->>'r_net')::numeric, 3) AS r_net, (payload->'outcome'->>'minutes')::int AS minutes FROM telegram_messages WHERE kind='result' ORDER BY sent_at DESC LIMIT 30",
+          "rawSql": "SELECT to_timestamp(exit_close_ms/1000.0) AS thoat_luc, CASE WHEN side>0 THEN 'LONG' ELSE 'SHORT' END AS huong, status AS ket_qua, round(entry::numeric,1) AS gia_vao, round(exit_price::numeric,1) AS gia_thoat, round(r_net::numeric,3) AS r_sau_phi, round((state->>'slippage_r')::numeric,3) AS lech_vs_backtest_r, round(equity_after::numeric,4) AS von FROM strategy_trades WHERE source='strategy_h1' AND status IN ('TP','SL','ANOMALY','TIMEOUT') ORDER BY exit_close_ms DESC LIMIT 50",
           "refId": "A"
         }
       ],
-      "title": "Kết quả lệnh bot gần nhất",
+      "title": "Lệnh paper đã đóng",
       "type": "table"
     },
     {
@@ -648,7 +705,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT service, round(extract(epoch FROM now() - updated_at)) AS age_seconds, updated_at, details->>'state' AS state, details FROM service_heartbeats ORDER BY service",
+          "rawSql": "SELECT service, round(extract(epoch FROM now() - updated_at)) AS age_seconds, updated_at, details->>'state' AS state, details FROM service_heartbeats WHERE service IN ('collector-rest','collector-ws','writer','publisher','strategy-h1','public-site','telegram') ORDER BY service",
           "refId": "A"
         }
       ],
@@ -734,6 +791,288 @@
       ],
       "title": "Lỗi / bất thường dữ liệu",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "vốn (×)",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT to_timestamp(exit_close_ms/1000.0) AS time, equity_after AS von FROM strategy_trades WHERE source='strategy_h1' AND equity_after IS NOT NULL AND $__timeFilter(to_timestamp(exit_close_ms/1000.0)) ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Vốn paper (lãi kép, rủi ro 1%/lệnh)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "R",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT time, r_tich_luy FROM (SELECT to_timestamp(exit_close_ms/1000.0) AS time, sum(r_net) OVER (ORDER BY exit_close_ms) AS r_tich_luy FROM strategy_trades WHERE source='strategy_h1' AND r_net IS NOT NULL) x WHERE $__timeFilter(time) ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "R tích luỹ (sau phí)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 14,
+        "x": 0,
+        "y": 37
+      },
+      "id": 16,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT to_timestamp(hour_open_ms/1000.0) AS nen_1h, CASE WHEN side>0 THEN 'LONG' ELSE 'SHORT' END AS huong, status, to_timestamp(entry_ms/1000.0) AS vao_luc, round(entry::numeric,1) AS gia_vao, round(tp::numeric,1) AS tp, round(sl::numeric,1) AS sl, round(b_pct::numeric*100,2) AS b_pct, round((state->>'last_close')::numeric,1) AS gia_gan_nhat FROM strategy_trades WHERE source='strategy_h1' AND status IN ('PENDING','OPEN') ORDER BY hour_open_ms",
+          "refId": "A"
+        }
+      ],
+      "title": "Lệnh paper đang mở",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 10,
+        "x": 14,
+        "y": 37
+      },
+      "id": 17,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT status AS ket_qua, count(*) AS so_lenh, round(avg(r_net)::numeric,3) AS r_tb, round(sum(r_net)::numeric,2) AS tong_r, round(avg((state->>'slippage_r')::float)::numeric,3) AS lech_tb_r FROM strategy_trades WHERE source='strategy_h1' AND r_net IS NOT NULL GROUP BY 1 UNION ALL SELECT 'TỔNG', count(*), round(avg(r_net)::numeric,3), round(sum(r_net)::numeric,2), round(avg((state->>'slippage_r')::float)::numeric,3) FROM strategy_trades WHERE source='strategy_h1' AND r_net IS NOT NULL",
+          "refId": "A"
+        }
+      ],
+      "title": "Tổng kết lệnh paper theo kết quả",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-market"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tre_phut"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 15
+                    },
+                    {
+                      "color": "red",
+                      "value": 30
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 18,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT kind, to_timestamp(max(period_end_ms)/1000.0) AS ky_moi_nhat, round((extract(epoch FROM now())*1000 - max(period_end_ms))/60000.0) AS tre_phut, count(*) FILTER (WHERE period_start_ms >= extract(epoch FROM now())*1000 - 86400000) AS so_dong_24h FROM observations WHERE timeframe='5m' AND kind IN ('candle','oi','ratio','top_ratio','top_acct_ratio','premium') GROUP BY kind ORDER BY kind",
+          "refId": "A"
+        }
+      ],
+      "title": "Độ mới dữ liệu đầu vào chiến lược (5m)",
+      "type": "table"
     }
   ],
   "refresh": "10s",
@@ -754,6 +1093,6 @@
   "timezone": "browser",
   "title": "BTC Pipeline Overview",
   "uid": "btc-pipeline-overview",
-  "version": 1,
+  "version": 2,
   "weekStart": "monday"
 }

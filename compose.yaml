@@ -6,6 +6,7 @@ x-app: &app
     DATABASE_URL: postgresql://pipeline:${POSTGRES_PASSWORD:?Create .env first}@postgres:5432/market
     KAFKA_BOOTSTRAP: kafka:9092
     BACKFILL_DAYS: ${BACKFILL_DAYS:-28}   # tối đa: Binance chỉ giữ ~30 ngày open interest / ratio
+    TZ: UTC
     LOOKBACK: ${LOOKBACK:-60}
     POLL_SECONDS: ${POLL_SECONDS:-60}
   volumes:
@@ -76,39 +77,43 @@ services:
   publisher:
     <<: *app
     command: [ python, -m, pipeline, publish ]
-  model-signals-v3:
+  strategy-h1:
     <<: *app
     environment:
       <<: *env
-      MODEL_V3_BUNDLE: ${MODEL_V3_BUNDLE:-artifacts/5m_event_v3/model_v3.joblib}
-      MODEL_V3_HISTORY_DAYS: ${MODEL_V3_HISTORY_DAYS:-20}
-      MODEL_V3_MIN_EV: ${MODEL_V3_MIN_EV:-}
-    command: [ python, -m, pipeline, model-signals-v3 ]
-  model-signals:
+      STRATEGY_BUNDLE: ${STRATEGY_BUNDLE:-artifacts/1h_strategy_v1/models_final.joblib}
+      STRATEGY_HISTORY_DAYS: ${STRATEGY_HISTORY_DAYS:-200}
+      STRATEGY_MAX_WAIT_S: ${STRATEGY_MAX_WAIT_S:-600}
+      STRATEGY_CATCHUP_HOURS: ${STRATEGY_CATCHUP_HOURS:-6}
+      STRATEGY_MAX_ENTRY_DELAY_MIN: ${STRATEGY_MAX_ENTRY_DELAY_MIN:-10}
+      STRATEGY_ENTRY: ${STRATEGY_ENTRY:-next_1m}
+      STRATEGY_START_EQUITY: ${STRATEGY_START_EQUITY:-1.0}
+      POSITIONING_TS_SHIFT_MS: ${POSITIONING_TS_SHIFT_MS:-0}
+    command: [ python, -m, pipeline, strategy-h1 ]
+  public-site:
     <<: *app
-    profiles: [ v2 ]   # model v2 cũ; bật bằng: docker compose --profile v2 up -d
     environment:
       <<: *env
-      MODEL_BUNDLE: ${MODEL_BUNDLE:-artifacts/5m_xgboost_signal_v2/models_final.joblib}
-      MODEL_HISTORY_DAYS: ${MODEL_HISTORY_DAYS:-30}
-      EXEC_RR: ${EXEC_RR:-1}
-      EXEC_MODE: ${EXEC_MODE:-abs}
-      EXEC_MIN_SCORE: ${EXEC_MIN_SCORE:-0.05}
-      EXEC_TOP_FRAC: ${EXEC_TOP_FRAC:-0.02}
-      EXEC_FEE_ROUNDTRIP: ${EXEC_FEE_ROUNDTRIP:-0.001}
-    command: [ python, -m, pipeline, model-signals ]
+      PUBLIC_DIR: ${PUBLIC_DIR:-artifacts/public}
+      PUBLIC_INTERVAL_S: ${PUBLIC_INTERVAL_S:-300}
+      PUBLIC_SINCE: ${PUBLIC_SINCE:-}
+      PUBLIC_BACKTEST_CSV: ${PUBLIC_BACKTEST_CSV:-artifacts/1h_strategy_v1/backtest_trades.csv}
+      PUBLIC_GITHUB_REPO: ${PUBLIC_GITHUB_REPO:-}
+      PUBLIC_GITHUB_BRANCH: ${PUBLIC_GITHUB_BRANCH:-main}
+      PUBLIC_GITHUB_TOKEN: ${PUBLIC_GITHUB_TOKEN:-}
+      PUBLIC_REPO_URL: ${PUBLIC_REPO_URL:-}
+    command: [ python, -m, pipeline, public-site ]
   telegram:
     <<: *app
     environment:
       <<: *env
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TELEGRAM_SOURCE: ${TELEGRAM_SOURCE:-modelv3_event}
-      TELEGRAM_HEALTH_SERVICE: ${TELEGRAM_HEALTH_SERVICE:-model-signals-v3}
-      TELEGRAM_TRACK_RR: ${TELEGRAM_TRACK_RR:-1}
-      TELEGRAM_FEE_PCT: ${TELEGRAM_FEE_PCT:-0.001}
-      TELEGRAM_ONE_AT_A_TIME: ${TELEGRAM_ONE_AT_A_TIME:-false}
-      TELEGRAM_MAX_SIGNAL_AGE_MIN: ${TELEGRAM_MAX_SIGNAL_AGE_MIN:-15}
+      # cố định (không đọc .env) để biến cũ của model v3 trong .env không ghi đè
+      TELEGRAM_SOURCE: strategy_h1
+      TELEGRAM_HEALTH_SERVICE: strategy-h1
+      TELEGRAM_MAX_SIGNAL_AGE_MIN: ${TELEGRAM_MAX_SIGNAL_AGE_MIN:-90}
+      TELEGRAM_NOTIFY_SKIPPED: ${TELEGRAM_NOTIFY_SKIPPED:-true}
       TELEGRAM_UTC_OFFSET_HOURS: ${TELEGRAM_UTC_OFFSET_HOURS:-7}
       TELEGRAM_DAILY_HOUR: ${TELEGRAM_DAILY_HOUR:-8}
     command: [ python, -m, pipeline, telegram ]
