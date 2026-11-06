@@ -15,7 +15,7 @@ Mọi tin đã gửi được ghi vào bảng telegram_messages (khóa chống t
 Biến môi trường:
   TELEGRAM_BOT_TOKEN            token từ @BotFather (bắt buộc)
   TELEGRAM_CHAT_ID              chat / group / channel nhận tin (lấy bằng `python -m pipeline telegram-setup`)
-  TELEGRAM_SOURCE               strategy_h1
+  TELEGRAM_SOURCE               strategy_h1_v2
   TELEGRAM_HEALTH_SERVICE       strategy-h1
   TELEGRAM_MAX_SIGNAL_AGE_MIN   90     (không gửi thông báo cho lệnh / tín hiệu cũ hơn, ví dụ sau khi backfill)
   TELEGRAM_NOTIFY_SKIPPED       true
@@ -129,11 +129,12 @@ def format_open(tr: dict, ev: dict, offset_hours: float, open_count: int | None 
                 equity: float | None = None) -> str:
     """tr: dòng strategy_trades (dict); ev: payload signal_events của tín hiệu."""
     long = int(tr['side']) > 0
-    s, d = ev.get('signal') or {}, ev.get('decision') or {}
+    s = ev.get('signal') or {}
     e, b = float(tr['entry']), float(tr['b_pct'])
     p = tr.get('params') or {}
-    fee = p.get('fee_pct', 0.001) / (p.get('sl_mult', 0.75) * b)
-    slip = (tr.get('state') or {}).get('slippage_r')
+    stt = tr.get('state') or {}
+    fee = (p.get('fee_maker' if stt.get('maker') else 'fee_taker', 0.0005) + p.get('fee_taker', 0.0005)) / (p.get('sl_mult', 1.0) * b)
+    slip = stt.get('slippage_r')
     lines = [
         f'{"🟢" if long else "🔴"} <b>{"LONG" if long else "SHORT"} {SYMBOL}</b> · H1 · {html.escape(str(ev.get("source", "")))}',
         f'⏰ Nến tín hiệu {fmt_time(int(tr["hour_open_ms"]), offset_hours, False)}–'
@@ -141,8 +142,7 @@ def format_open(tr: dict, ev: dict, offset_hours: float, open_count: int | None 
         f'Giá vào: <b>{fmt_price(e)}</b>',
         f'TP: {fmt_price(tr["tp"])} ({(float(tr["tp"]) / e - 1) * 100:+.2f}%)',
         f'SL: {fmt_price(tr["sl"])} ({(float(tr["sl"]) / e - 1) * 100:+.2f}%)',
-        f'Thoát nhanh: nến 5m ngược chiều có biên độ ≥ {p.get("anomaly_range", 0.0075) * 100:.2f}% · '
-        f'giữ tối đa {p.get("max_hold_h", 720) // 24} ngày',
+        f'Vào bằng {"limit (maker)" if stt.get("maker") else "market (taker)"} · giữ tối đa {p.get("max_hold_h", 9)}h',
         f'<i>p_touch {s.get("p_touch", float("nan")):.2f} · p_lên {s.get("p_up", float("nan")):.2f} · '
         f'b {b * 100:.2f}% · phí ≈ {fee:.2f}R</i>',
     ]
@@ -191,7 +191,7 @@ def format_summary(title: str, st: dict) -> str:
     if not st['n']:
         return f'{title}: chưa có lệnh nào đóng.'
     return (f'{title}: {st["n"]} lệnh · thắng {st["wins"] / st["n"]:.0%} · TP {st["tp"]} / SL {st["sl"]} / '
-            f'thoát nhanh {st["anomaly"]} / hết giờ {st["timeout"]} · tổng {st["sum_r"]:+.2f}R · '
+            f'hết giờ {st["timeout"]} · tổng {st["sum_r"]:+.2f}R · '
             f'TB {st["avg_r"]:+.3f}R/lệnh (sau phí)')
 
 
@@ -362,8 +362,9 @@ class Notifier:
         if not s:
             return f'🕐 Giờ {fmt_time(ev["hour_open_ms"], self.tz)}: không tính được ({d.get("error", "thiếu dữ liệu")}).'
         return (f'🕐 Nến 1h {fmt_time(ev["hour_open_ms"], self.tz)} · giá đóng {fmt_price(ev["close"])}\n'
-                f'p_touch {s["p_touch"]:.3f} (ngưỡng {s["thr_touch"]:.3f}) · p_lên {s["p_up"]:.3f} · '
-                f'độ tự tin {s["conf"]:.3f} (ngưỡng {s["thr_conf"]:.3f})\n'
+                f'p_touch {s["p_touch"]:.3f} (ngưỡng {s.get("thr_touch") or float("nan"):.3f}) · p_lên {s["p_up"]:.3f} · '
+                f'độ tự tin {s["conf"]:.3f} (ngưỡng LONG {s.get("thr_long") or float("nan"):.3f} / '
+                f'SHORT {s.get("thr_short") or float("nan"):.3f})\n'
                 f'Hướng: {d["side"]} · Tín hiệu: {"CÓ" if d["good"] else "không"}'
                 + (f' · vào lệnh: {"có" if d.get("admitted") else "không (" + str(d.get("skip_reason")) + ")"}'
                    if d['good'] else ''))

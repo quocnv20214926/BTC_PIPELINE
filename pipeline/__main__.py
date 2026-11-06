@@ -75,7 +75,7 @@ def main():
         from .workers import publish
         publish()
     elif args.command == 'strategy-h1':
-        # Chiến lược H1 (touch + hướng B): tín hiệu mỗi giờ + bộ thực thi lệnh paper (strategy_trades).
+        # Chiến lược H1 (touch + Direction): tín hiệu mỗi giờ + bộ thực thi lệnh paper (strategy_trades).
         from .strategy_live import strategy_worker
         strategy_worker()
     elif args.command == 'check-positioning':
