@@ -1,56 +1,40 @@
-"""BTCUSDT 5m - model TOUCH (v2): xác suất giá chạy đủ xa trong 4 giờ tới.
+"""BTCUSDT - model TOUCH: xác suất giá chạm +b HOẶC -b trong H nến tới (tính từ open[t+1]).
 
-Câu hỏi duy nhất của model: tại lúc nến 5m t đóng, trong H nến tiếp theo (mặc định 48 = 4h) giá có chạm
-+b HOẶC -b (tính từ giá tham chiếu open[t+1]) không?  b = clip(k * sigma * sqrt(H), min_barrier, max_barrier).
-Không dự báo hướng (các thử nghiệm dự báo hướng đã bị loại: xem lịch sử dự án).
-
-Feature (nhân quả, tại lúc nến t đóng): cửa sổ biến động, các sóng pivot gần nhất, quan hệ giữa các sóng, vị
-trí pivot, kênh giá, mức giá gần, tỉ lệ chạm trong quá khứ (chỉ nhãn đã đóng), bối cảnh (biến động chậm,
-xu hướng 1/5 ngày, giờ / thứ, số lệnh, funding).
-
-Đánh giá: walk-forward theo năm, ranh giới đã purge. Năm Y: train = nhãn kết thúc trước 1/1 của Y-1,
-validation = Y-1 (phần đầu: dừng sớm | phần sau: temperature scaling + ngưỡng), test = Y.
-Tín hiệu đầu ra mỗi nến: p_touch, barrier_pct, mức giá trên / dưới (close * (1 +- b)), time stop.
+Dùng cho chiến lược H1 (strategy_h1.py): nến 1h, H = 8, b = clip(sigma_EWM168 * sqrt(8), 1%, 5%).
+Phần này chỉ chứa: chuẩn hoá nến, funding, pivot ZigZag (nhân quả), nhãn, feature touch, dataset, XGBoost touch
+(trọng số thời gian + temperature scaling). Walk-forward, tín hiệu, backtest: strategy_h1.py.
+Feature touch: xem touch_features; tất cả tính tại lúc nến quyết định đóng, chỉ dùng dữ liệu đã biết.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
 import math
-import random
 import warnings
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
 
 try:  # numba: các vòng lặp pivot từ vài phút xuống vài giây
     from numba import njit
-    HAVE_NUMBA = True
 except ImportError:  # pragma: no cover
-    HAVE_NUMBA = False
-
     def njit(*args, **kwargs):
         if len(args) == 1 and callable(args[0]) and not kwargs:
             return args[0]
         return lambda f: f
 
-
-STRATEGY = "touch_signal_v2"
 TAKER_COLUMNS = ("taker_buy_base_volume", "taker_buy_base_asset_volume", "taker_buy_volume", "taker_buy_base")
-TOUCH_GROUPS = ("window", "legs", "relations", "positions", "channel", "levels", "past", "context")
+TOUCH_GROUPS = ("window", "legs", "relations", "positions", "channel", "levels", "context")
 FUNDING_FILE = "BTCUSDT_funding.csv"
 FUNDING_COLUMNS = ("funding_rate", "funding_mean_3", "funding_z_90", "funding_dev_90")
-WINDOWS = (6, 12, 24, 48, 96, 288)
-PAST_WINDOWS = (288, 576, 1440)
+WINDOWS = (4, 8, 12, 24)          # cửa sổ (nến)
+POSITIONS = 2                     # khoảng cách tới 2 pivot đã xác nhận gần nhất
+LEGS = 5                          # 5 sóng đã hoàn tất gần nhất
+LEVEL_PIVOTS = 5                  # levels: 5 pivot gần nhất + pivot đang hình thành
+FEATURE_HISTORY_BARS = 1440       # mẫu cần 1440 + H nến liên tục phía trước (giữ đúng tập mẫu của các thử nghiệm)
 
 
-# --------------------------------------------------------------------------- #
-# Configuration
-# --------------------------------------------------------------------------- #
 @dataclass
 class XGBParams:
     n_estimators: int = 1000
@@ -67,57 +51,36 @@ class XGBParams:
 
 @dataclass
 class Config:
-    csv_path: str = "historical_data/BTCUSDT_5m_all.csv"
-    output_dir: str = "artifacts/5m_xgboost_signal_v2"
-    bar_minutes: int = 5
-    # ---- barrier / nhãn
-    pivot_reversal: float = 0.005
+    bar_minutes: int = 60
     pivot_count: int = 8
-    lookback_bars: int = 288
-    barrier_horizon: int = 48
+    lookback_bars: int = 168
+    barrier_horizon: int = 8
     barrier_vol_mult: float = 1.0
-    min_barrier: float = 0.007
-    max_barrier: float = 0.03
-    vol_span: int = 288
-    slow_vol_span: int = 2880
+    min_barrier: float = 0.01
+    max_barrier: float = 0.05
+    vol_span: int = 168
+    slow_vol_span: int = 720
     sample_stride: int = 1
-    # ---- feature
     touch_groups: tuple[str, ...] = TOUCH_GROUPS
-    # ---- giao thức
-    eval_years: tuple[int, ...] = (2022, 2023, 2024, 2025, 2026)
-    val_es_frac: float = 0.6
-    # ---- huấn luyện
-    xgb_device: str = "auto"                  # "auto" | "cpu" | "cuda:N"
+    xgb_device: str = "cpu"
     xgb_n_jobs: int = -1
     time_decay_halflife_days: float = 540.0
     time_decay_floor: float = 0.2
-    calibrate: bool = True                    # temperature scaling trên phần calibration
     touch: XGBParams = field(default_factory=XGBParams)
-    # ---- đánh giá
-    n_boot: int = 200
-    top_fractions: tuple[float, ...] = (1.0, 0.5, 0.3, 0.2, 0.1, 0.05)
-    seed: int = 42
-    verbose: bool = True
 
     def __post_init__(self) -> None:
-        positive = {"bar_minutes": self.bar_minutes, "barrier_horizon": self.barrier_horizon,
-                    "vol_span": self.vol_span, "slow_vol_span": self.slow_vol_span, "pivot_count": self.pivot_count,
-                    "lookback_bars": self.lookback_bars, "sample_stride": self.sample_stride}
-        bad = [k for k, v in positive.items() if v < 1]
+        bad = [k for k in ("bar_minutes", "barrier_horizon", "vol_span", "slow_vol_span", "lookback_bars", "sample_stride")
+               if getattr(self, k) < 1]
         if bad:
             raise ValueError(f"must be >= 1: {', '.join(bad)}")
         if 1440 % self.bar_minutes:
             raise ValueError("bar_minutes must divide one day (1440 minutes)")
-        if self.pivot_count < 4:
-            raise ValueError("pivot_count must be >= 4")
+        if self.pivot_count < max(LEGS + 1, LEVEL_PIVOTS, 4):
+            raise ValueError(f"pivot_count must be >= {max(LEGS + 1, LEVEL_PIVOTS, 4)}")
         if self.slow_vol_span < self.trend_long_bars:
             raise ValueError(f"slow_vol_span must be >= {self.trend_long_bars}")
         if not 0 < self.min_barrier <= self.max_barrier < 1:
             raise ValueError("need 0 < min_barrier <= max_barrier < 1")
-        if not 0 < self.val_es_frac < 1:
-            raise ValueError("val_es_frac must be in (0, 1)")
-        if not self.eval_years or tuple(sorted(set(self.eval_years))) != tuple(self.eval_years):
-            raise ValueError("eval_years must be non-empty, sorted and unique")
         if not self.touch_groups or any(g not in TOUCH_GROUPS for g in self.touch_groups):
             raise ValueError(f"touch_groups must be a non-empty subset of {TOUCH_GROUPS}")
 
@@ -135,38 +98,15 @@ class Config:
 
     @property
     def gap_lookback(self) -> int:
-        """Đoạn nến dài nhất mà feature nhìn lại (có nến thiếu trong đoạn này thì bỏ mẫu)."""
-        return max(self.lookback_bars, max(PAST_WINDOWS) + self.barrier_horizon, self.trend_long_bars)
-
-
-def seed_everything(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-
-
-def resolve_device(device: str) -> str:
-    """'auto' -> 'cuda:0' only when XGBoost really trains on a GPU (silent CPU fallback counts as no GPU)."""
-    if device != "auto":
-        return device
-    try:
-        import xgboost as xgb
-        if not xgb.build_info().get("USE_CUDA", False):
-            return "cpu"
-        rng = np.random.RandomState(0)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            xgb.XGBClassifier(n_estimators=2, tree_method="hist", device="cuda:0").fit(
-                rng.rand(64, 3), np.arange(64) % 2)
-        if any(("GPU" in str(w.message)) or ("Device is changed" in str(w.message)) for w in caught):
-            return "cpu"
-        return "cuda:0"
-    except Exception:  # noqa: BLE001
-        return "cpu"
+        """Đoạn nến dài nhất phía trước mẫu phải liền mạch (có nến thiếu trong đoạn này thì bỏ mẫu)."""
+        return max(self.lookback_bars, FEATURE_HISTORY_BARS + self.barrier_horizon, self.trend_long_bars)
 
 
 # --------------------------------------------------------------------------- #
-# Data loading
+# Nến, funding
 # --------------------------------------------------------------------------- #
+
+
 def _ns_int(ts) -> np.ndarray:
     s = pd.Series(pd.to_datetime(ts, utc=True))
     try:
@@ -270,8 +210,10 @@ def prepare_candles(df: pd.DataFrame, bar_minutes: int) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-# ZigZag pivots (nhân quả)
+# Pivot ZigZag (nhân quả) và nhãn
 # --------------------------------------------------------------------------- #
+
+
 @njit(cache=True)
 def _pivot_kernel(high, low, reversal):
     n = len(high)
@@ -354,25 +296,6 @@ def _developing_kernel(high, low, confirm, kinds):
     return dev_idx, dev_price
 
 
-# --------------------------------------------------------------------------- #
-# Nhãn: tỉ lệ chạm từng nến (cho feature 'past')
-# --------------------------------------------------------------------------- #
-def touch_label_series(open_, high, low, bar_barrier, horizon) -> np.ndarray:
-    """Touch label of EVERY bar t (used for the causal 'past touch rate' features)."""
-    n = len(open_)
-    out = np.full(n, np.nan, dtype=np.float32)
-    if n <= horizon + 1:
-        return out
-    fmax = pd.Series(high).rolling(horizon).max().to_numpy()
-    fmin = pd.Series(low).rolling(horizon).min().to_numpy()
-    t = np.arange(0, n - horizon)
-    ref = open_[t + 1]
-    b = bar_barrier[t]
-    hit = (fmax[t + horizon] >= ref * (1.0 + b)) | (fmin[t + horizon] <= ref * (1.0 - b))
-    out[t] = np.where(np.isfinite(b), hit.astype(np.float32), np.nan)
-    return out
-
-
 def make_labels(open_, high, low, close, ts, barrier, horizon, chunk: int | None = None) -> dict:
     """Từ open[t+1], trên các nến t+1..t+H.
 
@@ -405,8 +328,10 @@ def make_labels(open_, high, low, close, ts, barrier, horizon, chunk: int | None
 
 
 # --------------------------------------------------------------------------- #
-# Feature theo nến và thống kê đường giá
+# Feature touch
 # --------------------------------------------------------------------------- #
+
+
 def compute_bar_features(df: pd.DataFrame, cfg: Config) -> dict:
     n = len(df)
     c, v = df["close"].to_numpy(np.float64), df["volume"].to_numpy(np.float64)
@@ -478,11 +403,19 @@ def completed_legs(pivots: pd.DataFrame, bf: dict, pre: dict) -> dict:
     return st
 
 
-# --------------------------------------------------------------------------- #
-# TOUCH features (không có hướng)
-# --------------------------------------------------------------------------- #
-def touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg: Config):
-    P, H, L = cfg.pivot_count, cfg.barrier_horizon, cfg.lookback_bars
+def touch_features(df, pivots, bf, pre, bar_barrier, ts, known_end, cfg: Config):
+    """Feature touch (không có hướng) tại các nến quyết định ts. known_end[i] = số pivot đã xác nhận tới ts[i].
+      context    sigma 1h / 30 ngày, xu hướng 1 / 5 ngày (có dấu và trị tuyệt đối), giờ / thứ, mức sigma, b, b / s,
+                 rvol (z-score bền của log volume so với 1 ngày), cường độ / cỡ lệnh, |funding|
+      window     cửa sổ WINDOWS nến: độ dời, efficiency ratio, biến động thực, spike, khoảng cách tới đỉnh / đáy, biên độ
+      positions  khoảng cách (thời gian, giá) tới POSITIONS pivot đã xác nhận gần nhất
+      legs       LEGS sóng đã hoàn tất + sóng hiện tại (c1) + đoạn hồi (c2) + tỉ lệ hồi
+      relations  tỉ lệ độ dài / thời gian giữa c1-l1, l1-l2, l2-l3
+      channel    độ rộng / độ hội tụ kênh 2 đỉnh + 2 đáy gần nhất
+      levels     khoảng cách tới mức pivot gần nhất trên / dưới (LEVEL_PIVOTS pivot + pivot đang hình thành), mật độ mức
+    Đơn vị: s = sigma * sqrt(H) (biên độ 8h kỳ vọng), rb = b / s."""
+    H, L = cfg.barrier_horizon, cfg.lookback_bars
+    NP = max(LEVEL_PIVOTS, 4, POSITIONS)          # số pivot đã xác nhận cần cho positions / channel / levels
     sigma, logc = bf["sigma"], bf["logc"]
     high, low, close = (df[k].to_numpy(np.float64) for k in ("high", "low", "close"))
     pivot_idx = pivots["pivot_idx"].to_numpy(np.int64)
@@ -490,6 +423,8 @@ def touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg
     pivot_kind = pivots["kind"].to_numpy(np.float64)
     dev_idx, dev_price = _developing_kernel(high, low, pivots["confirm_idx"].to_numpy(np.int64),
                                             pivots["kind"].to_numpy(np.int64))
+    if int(known_end.min()) < max(NP, LEGS + 1):
+        raise ValueError("touch_features: chưa đủ pivot đã xác nhận ở mẫu đầu (tăng pivot_count)")
     close_t, sig_t = close[ts], sigma[ts]
     s = sig_t * math.sqrt(H)
     barrier = bar_barrier[ts]
@@ -509,7 +444,7 @@ def touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg
         if with_duration:
             add(f"{prefix}_dur", st["dur"] / H, group)
 
-    # ---- context
+    # ---- context (như v2 + rvol)
     for name in ("sigma_ratio", "trend_1d_z", "trend_5d_z", "hour_sin", "hour_cos", "dow_sin", "dow_cos"):
         add(name, bf[name][ts], "context")
     add("log_sigma", np.log(sig_t), "context")
@@ -517,18 +452,19 @@ def touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg
     add("barrier_ratio", rb, "context")
     add("abs_trend_1d_z", np.abs(f["trend_1d_z"]), "context")
     add("abs_trend_5d_z", np.abs(f["trend_5d_z"]), "context")
-    if "trades" in df.columns:                        # trading intensity (number of trades per bar)
+    add("rvol", bf["rvol"][ts], "context")
+    if "trades" in df.columns:
         lt = np.log1p(df["trades"].to_numpy(np.float64))
         med = pd.Series(lt).rolling(cfg.bars_per_day, min_periods=cfg.bars_per_day // 4).median().to_numpy()
         add("trades_rz_6", _roll(lt - med, 6, "mean")[ts], "context")
         add("trades_rz_48", _roll(lt - med, 48, "mean")[ts], "context")
-        size = np.log1p(df["volume"].to_numpy(np.float64)) - lt                  # log average trade size
+        size = np.log1p(df["volume"].to_numpy(np.float64)) - lt
         smed = pd.Series(size).rolling(cfg.bars_per_day, min_periods=cfg.bars_per_day // 4).median().to_numpy()
         add("trade_size_rz_12", _roll(size - smed, 12, "mean")[ts], "context")
     if "funding_rate" in df.columns:
         add("funding_abs", np.abs(df["funding_rate"].to_numpy(np.float64))[ts] * 1e4, "context")
 
-    # ---- window
+    # ---- window: 4 / 8 / 12 / 24 nến
     for k in WINDOWS:
         if k > L:
             continue
@@ -541,22 +477,21 @@ def touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg
         add(f"w{k}_dn", dn, "window")
         add(f"w{k}_rng", up + dn, "window")
 
-    # ---- positions
-    sel = known_end[:, None] - P + np.arange(P)[None, :]
+    # ---- positions: 2 pivot đã xác nhận gần nhất
+    sel = known_end[:, None] - NP + np.arange(NP)[None, :]
     pi, pp, pk = pivot_idx[sel], pivot_price[sel], pivot_kind[sel]
     X = (pi - ts[:, None]) / H
     Y = np.log(pp / close_t[:, None]) / s[:, None]
     last = known_end - 1
     di, dp = dev_idx[ts], dev_price[ts]
-    xd, yd = (di - ts) / H, np.log(dp / close_t) / s
-    for j in range(1, 5):
-        add(f"pos{j}_r", np.hypot(X[:, P - j], Y[:, P - j]), "positions")
-    add("posd_r", np.hypot(xd, yd), "positions")
+    yd = np.log(dp / close_t) / s
+    for j in range(1, POSITIONS + 1):
+        add(f"pos{j}_r", np.hypot(X[:, NP - j], Y[:, NP - j]), "positions")
 
-    # ---- legs
+    # ---- legs: 5 sóng đã hoàn tất + sóng hiện tại
     legs = completed_legs(pivots, bf, pre)
     leg_info: dict[str, dict] = {}
-    for j in (1, 2, 3):
+    for j in range(1, LEGS + 1):
         li = known_end - 1 - j
         st = {k: v[li] for k, v in legs.items() if k not in ("jump", "disp_price")}
         emit_path(f"l{j}", "legs", st, legs["disp_price"][li], with_duration=True)
@@ -571,14 +506,14 @@ def touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg
     add("retrace_now", -disp2 / disp1, "legs")
     leg_info["c1"] = {"disp": disp1, "dur": st1["dur"]}
 
-    # ---- relations
+    # ---- relations (giữ nguyên)
     for x_leg, y_leg in (("c1", "l1"), ("l1", "l2"), ("l2", "l3")):
         a_, b_ = leg_info[x_leg], leg_info[y_leg]
         add(f"rel_{x_leg}_{y_leg}_size",
             np.log(np.maximum(np.abs(a_["disp"]), 1e-9) / np.maximum(np.abs(b_["disp"]), 1e-9)), "relations")
         add(f"rel_{x_leg}_{y_leg}_time", np.log(a_["dur"] / b_["dur"]), "relations")
 
-    # ---- channel
+    # ---- channel (giữ nguyên: 4 pivot cuối)
     hi_last = pk[:, -1] == 1
     hi_prev = pk[:, -3] == 1
     x_h1, y_h1 = np.where(hi_last, X[:, -1], X[:, -2]), np.where(hi_last, Y[:, -1], Y[:, -2])
@@ -596,17 +531,13 @@ def touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg
     add("ch_width", np.clip(width0 / rb, -20.0, 20.0), "channel")
     add("ch_conv", np.clip(conv, -20.0, 20.0), "channel")
 
-    # ---- levels
-    ys = np.column_stack([Y, yd])
+    # ---- levels: 5 pivot gần nhất + pivot đang hình thành
+    ys = np.column_stack([Y[:, NP - LEVEL_PIVOTS:], yd])
     above = np.where(ys > 0, ys, np.inf).min(axis=1) / rb
     below = np.where(ys < 0, -ys, np.inf).min(axis=1) / rb
     add("lvl_above", np.where(np.isfinite(above), above, np.nan), "levels")
     add("lvl_below", np.where(np.isfinite(below), below, np.nan), "levels")
     add("lvl_count", (np.abs(ys) <= rb[:, None]).sum(axis=1), "levels")
-
-    # ---- past touch rate (labels closed by t)
-    for k in PAST_WINDOWS:
-        add(f"past_touch_{k}", _roll(touch_s, k, "mean", max(10, k // 2))[ts - H], "past")
 
     groups = set(cfg.touch_groups)
     reg = [r for r in reg if r[1] in groups]
@@ -614,132 +545,10 @@ def touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg
 
 
 # --------------------------------------------------------------------------- #
-# Metric
-# --------------------------------------------------------------------------- #
-def bce_np(prob, y) -> float:
-    p = np.clip(np.asarray(prob, dtype=np.float64), 1e-7, 1.0 - 1e-7)
-    y = np.asarray(y, dtype=np.float64)
-    return float(-np.mean(y * np.log(p) + (1.0 - y) * np.log(1.0 - p)))
-
-
-def bce_logits_np(logits, y) -> float:
-    z = np.asarray(logits, dtype=np.float64)
-    return float(np.mean(np.logaddexp(0.0, z) - np.asarray(y, dtype=np.float64) * z))
-
-
-def safe_auc(y, score) -> float:
-    y = np.asarray(y)
-    return float(roc_auc_score(y, score)) if len(y) and len(np.unique(y)) == 2 else float("nan")
-
-
-def sigmoid(z):
-    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
-
-
-def logit(p):
-    p = np.clip(np.asarray(p, dtype=np.float64), 1e-7, 1.0 - 1e-7)
-    return np.log(p / (1.0 - p))
-
-
-def fit_temperature(logits, y) -> float:
-    """Scalar T > 0 minimising log loss of sigmoid(logit / T)."""
-    if len(y) < 50 or len(np.unique(y)) < 2:
-        return 1.0
-    grid = np.exp(np.linspace(math.log(0.25), math.log(100.0), 241))
-    return float(grid[int(np.argmin([bce_logits_np(logits / t, y) for t in grid]))])
-
-
-def block_bootstrap_ci(fn, blocks: np.ndarray, *arrays, n_boot: int = 200, seed: int = 0,
-                       alpha: float = 0.05) -> tuple[float, float]:
-    """Percentile CI of fn(*arrays) resampling whole blocks (UTC days) - robust to overlapping labels."""
-    if n_boot <= 0 or len(blocks) == 0:
-        return float("nan"), float("nan")
-    _, inv = np.unique(blocks, return_inverse=True)
-    order = np.argsort(inv, kind="stable")
-    counts = np.bincount(inv)
-    groups = np.split(order, np.cumsum(counts)[:-1])
-    rng = np.random.default_rng(seed)
-    vals = []
-    for _ in range(n_boot):
-        pick = rng.integers(0, len(groups), len(groups))
-        idx = np.concatenate([groups[i] for i in pick])
-        vals.append(fn(*(a[idx] for a in arrays)))
-    vals = np.asarray(vals, dtype=np.float64)
-    vals = vals[np.isfinite(vals)]
-    if len(vals) == 0:
-        return float("nan"), float("nan")
-    return float(np.quantile(vals, alpha / 2)), float(np.quantile(vals, 1 - alpha / 2))
-
-
-def binary_report(y, p, prior: float) -> dict:
-    y = np.asarray(y, dtype=np.int64)
-    p = np.asarray(p, dtype=np.float64)
-    if len(y) == 0:
-        return {"samples": 0}
-    ll, prior_ll = bce_np(p, y), bce_np(np.full(len(y), prior), y)
-    pred = (p >= 0.5).astype(np.int64)
-    tn, fp = int(np.sum((y == 0) & (pred == 0))), int(np.sum((y == 0) & (pred == 1)))
-    fn, tp = int(np.sum((y == 1) & (pred == 0))), int(np.sum((y == 1) & (pred == 1)))
-    div = lambda a, b: float(a / b) if b else None  # noqa: E731
-    recall, specificity = div(tp, tp + fn), div(tn, tn + fp)
-    mcc_den = math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
-    return {
-        "samples": int(len(y)), "positive_rate": float(y.mean()), "train_prior": float(prior),
-        "log_loss": ll, "prior_log_loss": prior_ll,
-        "log_loss_skill": float(1.0 - ll / prior_ll) if prior_ll > 0 else float("nan"),
-        "auc": safe_auc(y, p), "accuracy": float(np.mean(pred == y)),
-        "majority_accuracy": float(max(y.mean(), 1.0 - y.mean())),
-        "balanced_accuracy": (recall + specificity) / 2.0 if recall is not None and specificity is not None else None,
-        "precision": div(tp, tp + fp), "recall": recall, "specificity": specificity,
-        "mcc": float((tp * tn - fp * fn) / mcc_den) if mcc_den else None,
-        "confusion_matrix": {"tn": tn, "fp": fp, "fn": fn, "tp": tp},
-    }
-
-
-def reliability_bins(pred, real, k: int = 10) -> list[dict]:
-    pred, real = np.asarray(pred, dtype=np.float64), np.asarray(real, dtype=np.float64)
-    if len(pred) == 0:
-        return []
-    edges = np.unique(np.quantile(pred, np.linspace(0, 1, k + 1)))
-    which = np.clip(np.searchsorted(edges, pred, side="right") - 1, 0, max(len(edges) - 2, 0))
-    return [{"bin": int(b), "samples": int((which == b).sum()), "mean_pred": float(pred[which == b].mean()),
-             "mean_realised": float(real[which == b].mean())} for b in range(max(len(edges) - 1, 1)) if (which == b).any()]
-
-
-# --------------------------------------------------------------------------- #
-# Folds
-# --------------------------------------------------------------------------- #
-def _utc_ns(year: int) -> int:
-    return pd.Timestamp(f"{year}-01-01", tz="UTC").value
-
-
-def fold_ids(ds: Dataset, year: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """train: labels end before Jan-1 of year-1 | val: all of year-1 | test: year. Boundary labels purged."""
-    val_start, test_start, test_end = _utc_ns(year - 1), _utc_ns(year), _utc_ns(year + 1)
-    ts, end = ds.timestamp_ns, ds.label_end_ns
-    ids = np.arange(len(ts))
-    train = ids[end < val_start]
-    val = ids[(ts >= val_start) & (end < test_start)]
-    test = ids[(ts >= test_start) & (end < test_end)]
-    if min(len(train), len(val), len(test)) == 0:
-        raise ValueError(f"Incomplete walk-forward split for {year}")
-    return train, val, test
-
-
-def split_validation(ds: Dataset, val_ids: np.ndarray, frac: float) -> tuple[np.ndarray, np.ndarray]:
-    c = int(len(val_ids) * frac)
-    es, cal = val_ids[:c], val_ids[c:]
-    if len(es) == 0 or len(cal) == 0:
-        raise ValueError("Validation year too small to split")
-    es = es[ds.label_end_ns[es] < ds.timestamp_ns[cal[0]]]
-    if len(es) == 0:
-        raise ValueError("Purging removed the whole early-stopping set")
-    return es, cal
-
-
-# --------------------------------------------------------------------------- #
 # Dataset
 # --------------------------------------------------------------------------- #
+
+
 @dataclass
 class Dataset:
     decision_idx: np.ndarray
@@ -792,8 +601,7 @@ def _build_dataset(df, pivots, cfg: Config, live: bool, live_last: int | None) -
     if len(ts) == 0:
         raise ValueError("No decision bars available; check data length / gaps")
 
-    touch_s = touch_label_series(open_, high, low, bar_barrier, H)
-    feats, reg = touch_features(df, pivots, bf, pre, bar_barrier, touch_s, ts, known_end, cfg)
+    feats, reg = touch_features(df, pivots, bf, pre, bar_barrier, ts, known_end, cfg)
     names = tuple(nm for nm, _ in reg)
     labels, end_ns = None, None
     if not live:
@@ -805,8 +613,10 @@ def _build_dataset(df, pivots, cfg: Config, live: bool, live_last: int | None) -
 
 
 # --------------------------------------------------------------------------- #
-# Model
+# Model touch: XGBoost + temperature scaling
 # --------------------------------------------------------------------------- #
+
+
 def make_xgb(p: XGBParams, cfg: Config, seed: int):
     try:
         from xgboost import XGBClassifier
@@ -839,210 +649,23 @@ def predict_touch(models: dict, x: np.ndarray) -> np.ndarray:
     return sigmoid(logit(raw_proba(models, x)) / max(models["T_touch"], 1e-4))
 
 
-def fit_models(ds: Dataset, train_ids: np.ndarray, val_ids: np.ndarray, cfg: Config) -> dict:
-    """Dừng sớm trên phần đầu năm validation; temperature + ngưỡng trên phần còn lại."""
-    y = ds.labels["y_touch"]
-    es_ids, cal_ids = split_validation(ds, val_ids, cfg.val_es_frac)
-    w = _time_weights(ds, train_ids, int(ds.timestamp_ns[train_ids].max()), cfg)
-    model = make_xgb(cfg.touch, cfg, cfg.seed)
-    model.fit(ds.x[train_ids], y[train_ids], sample_weight=w, eval_set=[(ds.x[es_ids], y[es_ids])], verbose=False)
-    best = int(getattr(model, "best_iteration", model.n_estimators - 1)) + 1
-    if cfg.xgb_device != "cpu":
-        model.set_params(device="cpu")
-        model.get_booster().set_param({"device": "cpu"})
-    models = {"touch": (model, best), "T_touch": 1.0, "train_rate": float(y[train_ids].mean())}
-    if cfg.calibrate:
-        models["T_touch"] = fit_temperature(logit(raw_proba(models, ds.x[cal_ids])), y[cal_ids])
-    p_cal = predict_touch(models, ds.x[cal_ids])
-    models["thresholds"] = {q: float(np.quantile(p_cal, 1.0 - q)) for q in cfg.top_fractions}
-    return {"models": models, "calib_ids": cal_ids, "best_rounds": best,
-            "samples": {"train": int(len(train_ids)), "val_early_stop": int(len(es_ids)),
-                        "val_calibration": int(len(cal_ids))}}
+def bce_logits_np(logits, y) -> float:
+    z = np.asarray(logits, dtype=np.float64)
+    return float(np.mean(np.logaddexp(0.0, z) - np.asarray(y, dtype=np.float64) * z))
 
 
-# --------------------------------------------------------------------------- #
-# Đánh giá
-# --------------------------------------------------------------------------- #
-def top_table(p: np.ndarray, y: np.ndarray, thresholds: dict, decision_idx: np.ndarray, horizon: int) -> list[dict]:
-    """Tỉ lệ chạm thực tế của các nến có p_touch >= ngưỡng (ngưỡng lấy từ phần calibration)."""
-    rows = []
-    for q, thr in thresholds.items():
-        sel = p >= thr
-        idx = np.flatnonzero(sel)
-        keep, nxt = [], -1
-        for i in idx:                                   # tín hiệu không chồng nhau (cách nhau >= H nến)
-            if decision_idx[i] >= nxt:
-                keep.append(i)
-                nxt = decision_idx[i] + horizon
-        rows.append({"top_fraction": q, "threshold": thr, "selected_share": float(sel.mean()),
-                     "samples": int(sel.sum()), "mean_pred": float(p[sel].mean()) if sel.any() else np.nan,
-                     "touch_rate": float(y[sel].mean()) if sel.any() else np.nan,
-                     "independent": len(keep), "independent_touch_rate": float(y[keep].mean()) if keep else np.nan})
-    return rows
+def sigmoid(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
 
 
-def evaluate(ds: Dataset, p: np.ndarray, ids: np.ndarray, train_rate: float, thresholds: dict, cfg: Config) -> dict:
-    y = ds.labels["y_touch"][ids]
-    day = ds.timestamp_ns[ids] // 86_400_000_000_000
-    rep = binary_report(y, p, train_rate)
-    rep["auc_ci"] = block_bootstrap_ci(safe_auc, day, y, p, n_boot=cfg.n_boot, seed=cfg.seed)
-    rep["reliability"] = reliability_bins(p, y, 10)
-    rep["top"] = top_table(p, y, thresholds, ds.decision_idx[ids], cfg.barrier_horizon)
-    month = np.asarray(pd.DatetimeIndex(pd.to_datetime(ds.timestamp_ns[ids], utc=True)).tz_localize(None)
-                       .to_period("M").astype(str))
-    rep["monthly"] = [{"month": m, "samples": int((month == m).sum()), "touch_rate": float(y[month == m].mean()),
-                       "mean_pred": float(p[month == m].mean()), "auc": safe_auc(y[month == m], p[month == m])}
-                      for m in np.unique(month)]
-    return rep
+def logit(p):
+    p = np.clip(np.asarray(p, dtype=np.float64), 1e-7, 1.0 - 1e-7)
+    return np.log(p / (1.0 - p))
 
 
-def feature_importance(models: dict, ds: Dataset, top: int = 25) -> dict:
-    imp = np.asarray(models["touch"][0].feature_importances_, dtype=np.float64)
-    order = np.argsort(imp)[::-1][:top]
-    groups = pd.Series(imp, index=list(ds.names)).groupby(lambda n: ds.feature_groups[n]).sum()
-    return {"top": [{"feature": ds.names[i], "gain_share": float(imp[i])} for i in order],
-            "groups": {g: float(v) for g, v in groups.sort_values(ascending=False).items()}}
-
-
-# --------------------------------------------------------------------------- #
-# Pipeline
-# --------------------------------------------------------------------------- #
-def _json_default(o):
-    if isinstance(o, np.integer):
-        return int(o)
-    if isinstance(o, np.floating):
-        return float(o)
-    if isinstance(o, np.ndarray):
-        return o.tolist()
-    return str(o)
-
-
-def save_predictions(path: Path, ds: Dataset, ids: np.ndarray, p: np.ndarray) -> None:
-    np.savez_compressed(path, sample_id=ids, timestamp_ns=ds.timestamp_ns[ids], decision_idx=ds.decision_idx[ids],
-                        close=ds.close[ids], barrier_pct=ds.barrier_pct[ids], p_touch=p,
-                        **{f"label_{k}": v[ids] for k, v in ds.labels.items()})
-
-
-def _fold_key(cfg: Config, ds: Dataset) -> str:
-    c = {k: v for k, v in asdict(cfg).items() if k not in ("eval_years", "verbose", "output_dir", "csv_path",
-                                                              "xgb_device", "xgb_n_jobs", "n_boot")}
-    return json.dumps({"cfg": c, "features": list(ds.names), "samples": int(len(ds.decision_idx)),
-                       "last_ts": int(ds.timestamp_ns[-1])}, sort_keys=True, default=str)
-
-
-def run_fold(ds: Dataset, year: int, cfg: Config, out: Path | None = None) -> tuple[dict, dict]:
-    """Train + đánh giá một năm. Có `out`: lưu predictions_<năm>.npz + fold_<năm>.joblib và dùng lại nếu
-    config / feature / dữ liệu không đổi (chạy tiếp được khi bị ngắt)."""
-    import joblib
-    path = out / f"fold_{year}.joblib" if out is not None else None
-    key = _fold_key(cfg, ds)
-    if path is not None and path.exists():
-        saved = joblib.load(path)
-        if saved.get("key") == key:
-            return saved["report"], saved["fitted"]
-    train_ids, val_ids, test_ids = fold_ids(ds, year)
-    fitted = fit_models(ds, train_ids, val_ids, cfg)
-    m = fitted["models"]
-    p_cal = predict_touch(m, ds.x[fitted["calib_ids"]])
-    p_test = predict_touch(m, ds.x[test_ids])
-    rep = {"fold": str(year), "samples": fitted["samples"], "best_rounds": fitted["best_rounds"],
-           "temperature": m["T_touch"], "thresholds_from_calibration": m["thresholds"],
-           "validation_metrics": evaluate(ds, p_cal, fitted["calib_ids"], m["train_rate"], m["thresholds"], cfg),
-           "heldout_metrics": evaluate(ds, p_test, test_ids, m["train_rate"], m["thresholds"], cfg),
-           "importance": feature_importance(m, ds)}
-    if path is not None:
-        save_predictions(out / f"predictions_{year}.npz", ds, test_ids, p_test)
-        joblib.dump({"key": key, "report": rep, "fitted": fitted}, path)
-    return rep, fitted
-
-
-def summary_line(rep: dict) -> str:
-    h = rep["heldout_metrics"]
-    top = next((r for r in h["top"] if r["top_fraction"] == 0.1), {})
-    return (f"{rep['fold']:>6} | AUC {h['auc']:.3f} [{h['auc_ci'][0]:.3f},{h['auc_ci'][1]:.3f}] "
-            f"| log-loss skill {h['log_loss_skill']:+.3f} | touch rate {h['positive_rate']:.3f} "
-            f"| top10%: {top.get('touch_rate', float('nan')):.3f}")
-
-
-def export_bundle(path: Path, models: dict, ds: Dataset, cfg: Config) -> None:
-    import joblib
-    joblib.dump({"strategy": STRATEGY, "config": cfg, "models": models, "names": ds.names}, path)
-
-
-def run_pipeline(cfg: Config) -> dict:
-    """Walk-forward theo năm + export model của năm đánh giá cuối."""
-    cfg = replace(cfg, xgb_device=resolve_device(cfg.xgb_device))
-    seed_everything(cfg.seed)
-    df = load_candles(cfg.csv_path, cfg.bar_minutes)
-    pivots = find_confirmed_pivots(df, cfg.pivot_reversal)
-    ds = build_dataset(df, pivots, cfg)
-    out = Path(cfg.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    reports, fitted = [], None
-    for year in cfg.eval_years:
-        rep, fitted = run_fold(ds, year, cfg, out)
-        reports.append(rep)
-        if cfg.verbose:
-            print(summary_line(rep), flush=True)
-    export_bundle(out / "models_final.joblib", fitted["models"], ds, cfg)
-    result = {"candles": len(df), "pivots": len(pivots), "samples": len(ds.decision_idx), "features": len(ds.names),
-              "folds": reports, "final_fold": reports[-1]["fold"], "output_dir": str(out)}
-    (out / "metadata.json").write_text(json.dumps({"strategy": STRATEGY, "config": asdict(cfg), **result},
-                                                  indent=2, default=_json_default), encoding="utf-8")
-    return result
-
-
-# --------------------------------------------------------------------------- #
-# Live / batch inference
-# --------------------------------------------------------------------------- #
-def load_bundle(path: str | Path) -> dict:
-    import joblib
-    return joblib.load(path)
-
-
-def predict_frame(bundle: dict, candles: pd.DataFrame, last_n: int | None = 1,
-                  funding: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Tín hiệu cho các nến ĐÃ ĐÓNG gần nhất của một bảng kline (cần >= ~20 ngày nến 5m).
-
-    funding: các lần funding đã chốt (bảng BTCUSDT_funding.csv hoặc /fapi/v1/fundingRate) - bắt buộc nếu bundle
-    được train có funding. Cột trả về: timestamp, close, barrier_pct, p_touch, up_level, down_level, time_stop_bars."""
-    cfg: Config = bundle["config"]
-    df = prepare_candles(candles, cfg.bar_minutes)
-    if funding is not None:
-        df = attach_funding(df, funding, cfg.bar_minutes)
-    pivots = find_confirmed_pivots(df, cfg.pivot_reversal)
-    ds = build_dataset(df, pivots, cfg, live=True, live_last=last_n)
-    if ds.names != tuple(bundle["names"]):
-        missing = sorted(set(bundle["names"]) - set(ds.names))
-        raise ValueError(f"feature set differs from the exported bundle (trades / funding columns?) - missing: {missing[:10]}")
-    p = predict_touch(bundle["models"], ds.x)
-    frame = pd.DataFrame({"timestamp": pd.to_datetime(ds.timestamp_ns, utc=True), "close": ds.close,
-                          "barrier_pct": ds.barrier_pct, "p_touch": p})
-    frame["up_level"] = frame["close"] * (1 + frame["barrier_pct"])
-    frame["down_level"] = frame["close"] * (1 - frame["barrier_pct"])
-    frame["time_stop_bars"] = cfg.barrier_horizon
-    return frame
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Train and evaluate the v2 touch model")
-    d = Config()
-    parser.add_argument("--csv", default=d.csv_path)
-    parser.add_argument("--output-dir", default=d.output_dir)
-    parser.add_argument("--xgb-device", default=d.xgb_device, help="auto | cpu | cuda:0")
-    parser.add_argument("--sample-stride", type=int, default=d.sample_stride)
-    parser.add_argument("--horizon", type=int, default=d.barrier_horizon)
-    parser.add_argument("--years", type=int, nargs="+", default=list(d.eval_years))
-    parser.add_argument("--n-boot", type=int, default=d.n_boot)
-    parser.add_argument("--seed", type=int, default=d.seed)
-    parser.add_argument("--quiet", action="store_true")
-    a = parser.parse_args()
-    cfg = Config(csv_path=a.csv, output_dir=a.output_dir, xgb_device=a.xgb_device, sample_stride=a.sample_stride,
-                 barrier_horizon=a.horizon, eval_years=tuple(sorted(set(a.years))), n_boot=a.n_boot, seed=a.seed,
-                 verbose=not a.quiet)
-    result = run_pipeline(cfg)
-    print(json.dumps({"output_dir": result["output_dir"], "folds": [r["fold"] for r in result["folds"]]}, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+def fit_temperature(logits, y) -> float:
+    """Scalar T > 0 minimising log loss of sigmoid(logit / T)."""
+    if len(y) < 50 or len(np.unique(y)) < 2:
+        return 1.0
+    grid = np.exp(np.linspace(math.log(0.25), math.log(100.0), 241))
+    return float(grid[int(np.argmin([bce_logits_np(logits / t, y) for t in grid]))])
