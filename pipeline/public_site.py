@@ -19,7 +19,7 @@ Biến môi trường:
   PUBLIC_DIR             artifacts/public
   PUBLIC_INTERVAL_S      300
   PUBLIC_SINCE           (YYYY-MM-DD) ngày bắt đầu forward test; mặc định = lệnh / tín hiệu đầu tiên
-  PUBLIC_BACKTEST_CSV    artifacts/1h_strategy_v1/backtest_trades.csv  (phần backtest tham khảo; bỏ trống để tắt)
+  PUBLIC_BACKTEST_CSV    artifacts/1h_strategy_v2/backtest_trades.csv  (phần backtest tham khảo; bỏ trống để tắt)
   PUBLIC_GITHUB_REPO     owner/repo   (bỏ trống = chỉ ghi file)
   PUBLIC_GITHUB_BRANCH   main
   PUBLIC_GITHUB_TOKEN    fine-grained token, quyền Contents: read/write trên repo đó
@@ -228,9 +228,9 @@ def build(db, source: str = STRATEGY_SOURCE, since_ms: int | None = None, backte
         'generated_at': iso(now_ms()), 'demo': demo, 'symbol': INSTRUMENT.split(':')[-1],
         'since': iso(since), 'last_signal_hour': iso(last - H1) if last else None,
         'running': bool(last and now_ms() - last < 2 * H1 + 15 * 60_000),
-        'rules': {'risk_pct': risk * 100, 'tp_mult': p.get('tp_mult', 1.0), 'sl_mult': p.get('sl_mult', 0.75),
-                  'anomaly_pct': 100 * float(p.get('anomaly_range', 0.0075)), 'max_positions': p.get('max_positions', 5),
-                  'max_hold_days': int(p.get('max_hold_h', 720)) // 24, 'fee_pct': 100 * float(p.get('fee_pct', 0.001))},
+        'rules': {'risk_pct': risk * 100, 'tp_mult': p.get('tp_mult', 1.0), 'sl_mult': p.get('sl_mult', 1.0),
+                  'max_positions': p.get('max_positions', 5), 'max_hold_hours': int(p.get('max_hold_h', 9)),
+                  'fee_pct': 100 * (float(p.get('fee_maker', 0.0002)) + float(p.get('fee_taker', 0.0005)))},
         'summary': summary(closed, open_, c),
         'equity': c['points'], 'monthly': monthly(closed),
         'open': open_,
@@ -295,7 +295,7 @@ def public_worker(once: bool = False):
     interval = env('PUBLIC_INTERVAL_S', '300', float)
     since = env('PUBLIC_SINCE', '')
     since_ms = int(datetime.fromisoformat(since).replace(tzinfo=timezone.utc).timestamp() * 1000) if since else None
-    bt_csv = env('PUBLIC_BACKTEST_CSV', 'artifacts/1h_strategy_v1/backtest_trades.csv')
+    bt_csv = env('PUBLIC_BACKTEST_CSV', 'artifacts/1h_strategy_v2/backtest_trades.csv')
     repo, token = env('PUBLIC_GITHUB_REPO', ''), env('PUBLIC_GITHUB_TOKEN', '')
     gh = GitHub(repo, token, env('PUBLIC_GITHUB_BRANCH', 'main')) if repo and token else None
     repo_url = env('PUBLIC_REPO_URL', f'https://github.com/{repo}/commits' if repo else '') or None

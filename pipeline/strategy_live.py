@@ -1,30 +1,31 @@
-"""Worker `strategy-h1`: chạy chiến lược H1 (touch + hướng B, model_training/strategy_h1.py) trên dữ liệu live và
-quản lý lệnh paper bằng bộ thực thi pipeline/strategy_exec.py (khớp backtest_m5).
+"""Worker `strategy-h1`: chạy chiến lược H1 (touch + Direction, model_training/strategy_h1.py) trên dữ liệu live và
+quản lý lệnh paper bằng bộ thực thi pipeline/strategy_exec.py (khớp strategy_h1.simulate + select_trades).
 
 Mỗi giờ H (nến 1h [H-1h, H) vừa đóng):
   1. Chờ đủ dữ liệu: 12 nến 5m của giờ đó + dòng vị thế của nến 5m cuối giờ (oi, top_acct_ratio, top_ratio,
      ratio, premium). Quá STRATEGY_MAX_WAIT_S giây thì vẫn tính (bảng vị thế giữ giá trị cũ <= 15 phút, như train).
-  2. Dựng dữ liệu đúng như train:
-       - nến 5m (DB, phần thiếu lấy REST) -> strategy_h1.aggregate_1h -> nến 1h (STRATEGY_HISTORY_DAYS ngày;
-         >= 180 ngày cho xác suất trùng khớp backtest, kiểm định trong historical_tests/test_strategy_live.py)
-       - bảng vị thế 5m bằng model_training/positioning_data.align (cùng hàm dựng bảng train)
-       - funding đã chốt (REST /fapi/v1/fundingRate, 200 kỳ gần nhất)
-  3. strategy_h1.predict_live -> p_touch, p_up, độ tự tin, tín hiệu, hướng, b.
-  4. Ghi signal_events (source strategy_h1, timeframe 1h) + outbox (signals.model.v1) trong cùng transaction.
-     Có tín hiệu -> bộ thực thi nhận / bỏ (tối đa 5 lệnh, cách >= 1h) và tạo lệnh PENDING trong strategy_trades.
-Mỗi vòng lặp: khớp giá vào cho lệnh PENDING (open nến 1m đầu tiên sau lúc ra quyết định) và theo dõi lệnh OPEN:
-TP / SL trên nến 1m (thiếu nến 1m thì dùng nến 5m), thoát nhanh trên nến 5m, hết hạn sau max_hold_bars giờ.
+  2. Dựng dữ liệu đúng như train: nến 5m (DB, phần thiếu lấy REST) -> strategy_h1.aggregate_1h -> nến 1h
+     (STRATEGY_HISTORY_DAYS ngày); bảng vị thế 5m bằng positioning_data.align (cùng hàm dựng bảng train);
+     funding đã chốt (REST /fapi/v1/fundingRate, 200 kỳ gần nhất).
+  3. strategy_h1.predict_live -> p_touch, p_up, ngưỡng trượt, tín hiệu, hướng, b. Ngưỡng trượt (touch 14 ngày,
+     Direction 90 ngày) tính trên lịch sử dự báo của CÙNG bundle: phần lưu trong bundle (walk-forward) + các giờ live
+     đã ghi trong signal_events -> giống hệt walk-forward.
+  4. Ghi signal_events (source strategy_h1_v2, timeframe 1h) + outbox (signals.model.v1) trong cùng transaction.
+     Có tín hiệu -> bộ thực thi nhận / bỏ (tối đa max_positions lệnh, cách >= min_gap giờ) và tạo lệnh PENDING.
+Mỗi vòng lặp: lệnh PENDING vào theo cfg.entry_mode (limit lùi 0.05b trong 10 phút rồi market) và lệnh OPEN được theo
+dõi trên nến 1m (thiếu nến 1m thì dùng nến 5m): TP / SL, hết hạn sau max_hold_hours.
 
+Model phải train lại mỗi quý (fold walk-forward của quý mới): log cảnh báo khi bundle cũ hơn quý hiện tại.
 Hệ thống KHÔNG đặt lệnh thật: mọi lệnh là paper (forward test).
 
 Biến môi trường:
-  STRATEGY_BUNDLE           artifacts/1h_strategy_v1/models_final.joblib
+  STRATEGY_BUNDLE           artifacts/1h_strategy_v2/models_final.joblib
   STRATEGY_HISTORY_DAYS     200
   STRATEGY_MAX_WAIT_S       600     chờ dữ liệu vị thế tối đa sau khi giờ đóng
   STRATEGY_POLL_SECONDS     15
   STRATEGY_CATCHUP_HOURS    6       khi khởi động lại: tính bù tín hiệu cho tối đa N giờ đã qua
   STRATEGY_MAX_ENTRY_DELAY_MIN 10   tín hiệu ra quyết định trễ hơn H + N phút thì không vào lệnh (ghi lý do 'late')
-  STRATEGY_ENTRY            next_1m (next_1m | bar_open)
+  STRATEGY_FILL_BARS        1m      nến dùng để khớp lệnh / TP / SL: 1m (thực tế) | 5m (giống hệt backtest)
   STRATEGY_START_EQUITY     1.0
   POSITIONING_TS_SHIFT_MS   0       create_time (data.binance.vision) = timestamp REST + giá trị này
 """
@@ -65,18 +66,18 @@ def env(name, default, cast=str):
 
 class Settings:
     def __init__(self):
-        self.bundle_path = Path(env('STRATEGY_BUNDLE', 'artifacts/1h_strategy_v1/models_final.joblib'))
+        self.bundle_path = Path(env('STRATEGY_BUNDLE', 'artifacts/1h_strategy_v2/models_final.joblib'))
         self.source = env('STRATEGY_SOURCE', STRATEGY_SOURCE)
         self.history_days = env('STRATEGY_HISTORY_DAYS', '200', float)
         self.max_wait_ms = int(env('STRATEGY_MAX_WAIT_S', '600', float) * 1000)
         self.poll = env('STRATEGY_POLL_SECONDS', '15', float)
         self.catchup_h = env('STRATEGY_CATCHUP_HOURS', '6', int)
         self.max_entry_delay_ms = int(env('STRATEGY_MAX_ENTRY_DELAY_MIN', '10', float) * 60_000)
-        self.entry = env('STRATEGY_ENTRY', 'next_1m')
+        self.fill_bars = env('STRATEGY_FILL_BARS', '1m')
         self.start_equity = env('STRATEGY_START_EQUITY', '1.0', float)
         self.ts_shift_ms = env('POSITIONING_TS_SHIFT_MS', '0', int)
-        if self.entry not in ('next_1m', 'bar_open'):
-            raise ValueError('STRATEGY_ENTRY must be next_1m or bar_open')
+        if self.fill_bars not in ('1m', '5m'):
+            raise ValueError('STRATEGY_FILL_BARS must be 1m or 5m')
 
 
 # --------------------------------------------------------------------------- #
@@ -228,43 +229,55 @@ def hour_readiness(db, H: int, ts_shift_ms: int) -> dict:
     return {'candles_5m': int(n5), 'positioning': got, 'ready': n5 == 12 and all(got.values())}
 
 
+def bundle_id(bundle: dict) -> str:
+    return f"{bundle['trained_quarter']}/{bundle['data_end_ns']}"
+
+
+def live_history(db, source: str, bid: str, since_ms: int) -> pd.DataFrame:
+    """Dự báo live (cùng bundle) đã ghi: t_ns = open time của nến 1h, p_touch, p_up."""
+    rows = db.execute("""SELECT payload FROM signal_events WHERE source=%s AND event_time_ms >= %s
+        AND payload->'model'->>'bundle_id' = %s AND payload->'signal' IS NOT NULL AND payload->>'signal' <> 'null'""",
+                      (source, since_ms, bid)).fetchall()
+    out = [(int(r['payload']['hour_open_ms']) * 1_000_000, float(r['payload']['signal']['p_touch']),
+            float(r['payload']['signal']['p_up'])) for r in rows]
+    return pd.DataFrame(out, columns=['t_ns', 'p_touch', 'p_up'])
+
+
 def compute_signal(bundle: dict, candles_5m: pd.DataFrame, positioning: pd.DataFrame, funding: pd.DataFrame,
-                   H: int) -> pd.Series:
+                   H: int, history: pd.DataFrame | None = None) -> dict:
     """Đầu ra model cho nến 1h [H-1h, H). candles_5m: nến 5m kết thúc ở H."""
     h1 = st.aggregate_1h(candles_5m)
     if not len(h1) or int(pd.Timestamp(h1['timestamp'].iloc[-1]).value // 1_000_000) != H - H1:
         raise ValueError(f'nến 1h {pd.to_datetime(H - H1, unit="ms", utc=True)} chưa đủ 12 nến 5m')
-    P = st.predict_live(bundle, h1, positioning, funding, last_n=1)
-    row = P.iloc[-1]
-    if int(pd.Timestamp(row['timestamp']).value // 1_000_000) != H - H1:
+    row = st.predict_live(bundle, h1, positioning, funding, history)
+    if row['t_ns'] // 1_000_000 != H - H1:
         raise ValueError('model không có dự báo cho giờ vừa đóng (thiếu lịch sử / gap)')
     return row
 
 
-def signal_event(row: pd.Series, H: int, bundle: dict, settings: Settings, quality: dict) -> dict:
+def signal_event(row: dict, H: int, bundle: dict, settings: Settings, quality: dict) -> dict:
     cfg = bundle['config']
-    side = int(row['side'])
-    b = float(row['b'])
-    close = float(row['close'])
+    side, b, close = int(row['side']), float(row['b']), float(row['close'])
     sid = hashlib.sha256(f'{settings.source}/{H}'.encode()).hexdigest()
+    fin = lambda x: None if x is None or not math.isfinite(x) else float(x)          # noqa: E731
     return {
-        'schema_version': 3, 'signal_id': sid, 'instrument': INSTRUMENT, 'signal_type': 'model',
+        'schema_version': 4, 'signal_id': sid, 'instrument': INSTRUMENT, 'signal_type': 'model',
         'source': settings.source, 'timeframe': '1h', 'event_time_ms': H, 'hour_open_ms': H - H1,
         'produced_at_ms': now_ms(), 'close': close,
         'signal': {'p_touch': float(row['p_touch']), 'p_up': float(row['p_up']), 'conf': float(row['conf']),
-                   'b_pct': b, 'thr_touch': float(bundle['thr_touch']), 'thr_conf': float(bundle['thr_conf']),
-                   'touch_ok': bool(row['p_touch'] >= bundle['thr_touch']),
-                   'conf_ok': bool(row['conf'] >= bundle['thr_conf'])},
+                   'b_pct': b, 'thr_touch': fin(row['thr_touch']), 'thr_long': fin(row['thr_long']),
+                   'thr_short': fin(row['thr_short']), 'touch_ok': bool(row['touch_ok']), 'dir_ok': bool(row['dir_ok']),
+                   'history_hours': int(row['history_hours'])},
         'decision': {'good': bool(row['signal']), 'side': 'LONG' if side > 0 else 'SHORT',
                      'tp_pct': cfg.tp_mult * b, 'sl_pct': cfg.sl_mult * b,
                      'tp_ref': close * math.exp(side * cfg.tp_mult * b),
                      'sl_ref': close * math.exp(-side * cfg.sl_mult * b),
-                     'rule': (f'touch top {cfg.touch_top:.0%} + B top {cfg.dir_top:.0%}; TP {cfg.tp_mult}b, SL '
-                              f'{cfg.sl_mult}b, thoát nhanh nến 5m ngược chiều >= {cfg.anomaly_range:.2%}, '
-                              f'tối đa {cfg.max_positions} lệnh, giữ tối đa {cfg.max_hold_bars}h')},
+                     'rule': (f'touch top {cfg.touch_top:.0%} (14 ngày) + Direction top {cfg.dir_top:.0%} cân bằng 2 phía '
+                              f'(90 ngày); TP {cfg.tp_mult}b, SL {cfg.sl_mult}b, vào {cfg.entry_mode}, '
+                              f'tối đa {cfg.max_positions} lệnh, giữ tối đa {cfg.max_hold_hours}h')},
         'data_quality': quality,
-        'model': {'bundle': settings.bundle_path.name, 'strategy': bundle.get('strategy'),
-                  'trained_fold': bundle.get('trained_fold')},
+        'model': {'bundle': settings.bundle_path.name, 'bundle_id': bundle_id(bundle), 'strategy': bundle.get('strategy'),
+                  'trained_quarter': bundle.get('trained_quarter')},
     }
 
 
@@ -326,10 +339,9 @@ def set_state(db, source: str, equity: float, last_entry_hour_ms: int | None):
                (equity, last_entry_hour_ms, source))
 
 
-def bars_for(db, start_ms: int, end_ms: int, rest: KlineHistory | None = None) -> list[sx.Bar]:
-    """Nến để theo dõi lệnh trong [start_ms, end_ms): mỗi khoảng 5m đã đóng -> 5 nến 1m (TP/SL) + nến 5m (thoát
-    nhanh); thiếu nến 1m -> nến 5m dùng cho cả TP/SL (bảo thủ). Nến 5m thiếu trong DB lấy từ REST; chỉ xử lý
-    đến khoảng 5m liên tục cuối cùng (không nhảy qua chỗ trống)."""
+def bars_for(db, start_ms: int, end_ms: int, rest: KlineHistory | None = None, fine: bool = True) -> list[sx.Bar]:
+    """Nến để khớp / theo dõi lệnh trong [start_ms, end_ms): mỗi khoảng 5m đã đóng -> 5 nến 1m nếu đủ (fine), không thì
+    nến 5m. Nến 5m thiếu trong DB lấy từ REST; chỉ xử lý đến khoảng 5m liên tục cuối cùng (không nhảy qua chỗ trống)."""
     start5 = start_ms - start_ms % M5
     end5 = min(end_ms, now_ms()) // M5 * M5 - M5            # open time của nến 5m đã đóng gần nhất
     f5 = db_candles(db, '5m', start5, end5 + M5)
@@ -341,23 +353,18 @@ def bars_for(db, start_ms: int, end_ms: int, rest: KlineHistory | None = None) -
                   .reset_index(drop=True))
     times = f5['open_time_ms'].astype('int64').to_numpy()
     if len(times):
-        expected = start5 + M5 * np.arange(len(times))
-        cut = np.flatnonzero(times != expected)
+        cut = np.flatnonzero(times != start5 + M5 * np.arange(len(times)))
         if len(cut):
             f5 = f5.iloc[:cut[0]]                          # dừng ở chỗ trống đầu tiên
-    f1 = db_candles(db, '1m', start5, end5 + M5)
-    one = {int(r.open_time_ms): r for r in f1.itertuples()}
+    one = {int(r.open_time_ms): r for r in db_candles(db, '1m', start5, end5 + M5).itertuples()} if fine else {}
     bars = []
     for r in f5.itertuples():
         t5 = int(r.open_time_ms)
         mins = [one.get(t5 + i * M1) for i in range(5)]
-        if all(m is not None for m in mins):
-            bars += [sx.Bar(int(m.open_time_ms), int(m.open_time_ms) + M1, m.open, m.high, m.low, m.close, True, False)
-                     for m in mins]
-            bars.append(sx.Bar(t5, t5 + M5, r.open, r.high, r.low, r.close, False, True))
+        if fine and all(m is not None for m in mins):
+            bars += [sx.Bar(int(m.open_time_ms), int(m.open_time_ms) + M1, m.open, m.high, m.low, m.close) for m in mins]
         else:
-            bars.append(sx.Bar(t5, t5 + M5, r.open, r.high, r.low, r.close, True, True))
-    bars.sort(key=lambda b: (b.close_ms, not b.levels))
+            bars.append(sx.Bar(t5, t5 + M5, r.open, r.high, r.low, r.close))
     return bars
 
 
@@ -366,15 +373,19 @@ class Strategy:
         self.db, self.s = db, settings
         self.bundle = st.load_bundle(settings.bundle_path)
         self.cfg = self.bundle['config']
+        self.bid = bundle_id(self.bundle)
         self.p = sx.ExecParams.from_strategy(self.cfg)
         self.rest = KlineHistory()
         self.funding = FundingCache()
         self.params = {k: getattr(self.p, k) for k in self.p.__dataclass_fields__}
+        now_q = pd.Period(pd.to_datetime(now_ms(), unit='ms'), 'Q')
+        if str(now_q) != self.bundle['trained_quarter']:
+            log.warning('bundle train cho %s, quý hiện tại %s: cần train lại (train_strategy_h1.ipynb)',
+                        self.bundle['trained_quarter'], now_q)
 
     # -- tín hiệu mỗi giờ ---------------------------------------------------- #
     def pending_hours(self) -> list[int]:
-        now = now_ms()
-        last_closed = now // H1 * H1
+        last_closed = now_ms() // H1 * H1
         row = self.db.execute('SELECT max(event_time_ms) AS t FROM signal_events WHERE source=%s',
                               (self.s.source,)).fetchone()
         first = last_closed - (self.s.catchup_h - 1) * H1
@@ -387,9 +398,8 @@ class Strategy:
         late = now_ms() - H
         if not ready['ready'] and late < self.s.max_wait_ms:
             return None                                        # chờ dữ liệu
-        if ready['candles_5m'] < 12:
-            if late < 6 * H1:
-                return None                                    # nến 5m chưa về (collector trễ) -> chờ tiếp
+        if ready['candles_5m'] < 12 and late < 6 * H1:
+            return None                                        # nến 5m chưa về (collector trễ) -> chờ tiếp
         start = H - int(self.s.history_days * 86_400_000)
         start -= start % M5
         c5 = history_5m(self.db, self.rest, start, H)
@@ -397,8 +407,9 @@ class Strategy:
         pos_start = H - 20 * 86_400_000
         pos = positioning_frame(self.db, grid[grid >= pos_start], pos_start, H, self.s.ts_shift_ms,
                                 ref_close=c5.set_index('open_time_ms')['close'])
+        hist = live_history(self.db, self.s.source, self.bid, H - (self.cfg.dir_window_days + 1) * 86_400_000)
         try:
-            row = compute_signal(self.bundle, c5, pos, self.funding.get(self.db), H)
+            row = compute_signal(self.bundle, c5, pos, self.funding.get(self.db), H, hist)
         except ValueError as exc:
             if late < 6 * H1:
                 raise
@@ -411,9 +422,8 @@ class Strategy:
         ev = signal_event(row, H, self.bundle, self.s, quality)
         decision = ev['decision']
         with self.db.transaction():
-            trade = None
             if decision['good']:
-                decision['admitted'], decision['skip_reason'] = self.admit(ev, H, late)
+                decision['admitted'], decision['skip_reason'] = self.admit(H, late)
             ok = self.db.execute("""INSERT INTO signal_events(signal_id,instrument,signal_type,source,timeframe,
                 event_time_ms,produced_at_ms,payload) VALUES(%s,%s,'model',%s,'1h',%s,%s,%s)
                 ON CONFLICT DO NOTHING RETURNING signal_id""",
@@ -424,18 +434,21 @@ class Strategy:
                 if decision['good'] and decision['admitted']:
                     trade = sx.Trade(trade_id=ev['signal_id'], signal_id=ev['signal_id'], hour_open_ms=H - H1,
                                      side=1 if decision['side'] == 'LONG' else -1, b=ev['signal']['b_pct'])
-                    trade.extra['decided_ms'] = now_ms()
-                    save_trade(self.db, trade, self.s.source, now_ms(), self.params)
+                    decided = now_ms()
+                    trade.extra['decided_ms'] = decided
+                    # chỉ khớp bằng nến mở SAU lúc ra quyết định (5m: đúng như backtest, từ nến mở lúc H)
+                    trade.extra['start_ms'] = (H if self.s.fill_bars == '5m'
+                                               else max(H, decided - decided % M1 + (M1 if decided % M1 else 0)))
+                    save_trade(self.db, trade, self.s.source, decided, self.params)
                     stt = get_state(self.db, self.s.source, self.s.start_equity)
                     set_state(self.db, self.s.source, stt['equity'], H - H1)
         log.info('strategy-h1 %s p_touch=%.3f p_up=%.3f signal=%s %s', pd.to_datetime(H, unit='ms', utc=True),
-                 ev['signal']['p_touch'], ev['signal']['p_up'], decision['good'],
-                 decision.get('skip_reason') or '')
+                 ev['signal']['p_touch'], ev['signal']['p_up'], decision['good'], decision.get('skip_reason') or '')
         return ev
 
     def record_missing(self, H: int, reason: str) -> dict:
         sid = hashlib.sha256(f'{self.s.source}/{H}'.encode()).hexdigest()
-        ev = {'schema_version': 3, 'signal_id': sid, 'instrument': INSTRUMENT, 'signal_type': 'model',
+        ev = {'schema_version': 4, 'signal_id': sid, 'instrument': INSTRUMENT, 'signal_type': 'model',
               'source': self.s.source, 'timeframe': '1h', 'event_time_ms': H, 'hour_open_ms': H - H1,
               'produced_at_ms': now_ms(), 'close': None, 'signal': None,
               'decision': {'good': False, 'side': None, 'admitted': False, 'skip_reason': 'no_data', 'error': reason}}
@@ -445,7 +458,7 @@ class Strategy:
         log.warning('strategy-h1 %s skipped: %s', pd.to_datetime(H, unit='ms', utc=True), reason)
         return ev
 
-    def admit(self, ev: dict, H: int, late_ms: int) -> tuple[bool, str | None]:
+    def admit(self, H: int, late_ms: int) -> tuple[bool, str | None]:
         if late_ms > self.s.max_entry_delay_ms:
             return False, 'late'
         stt = get_state(self.db, self.s.source, self.s.start_equity)
@@ -453,68 +466,55 @@ class Strategy:
         ok, why = book.admit(H - H1)
         return ok, (None if ok else why)
 
-    # -- theo dõi lệnh ------------------------------------------------------- #
+    # -- khớp và theo dõi lệnh ----------------------------------------------- #
     def manage(self) -> dict:
         stt = get_state(self.db, self.s.source, self.s.start_equity)
         trades = [t for t in load_trades(self.db, self.s.source) if t.is_open]
         if not trades:
             return {'open': 0, 'filled': 0, 'closed': 0, 'equity': stt['equity']}
         book = sx.Book(self.p, stt['equity'], trades, stt['last_entry_hour_ms'])
-        filled = closed = 0
         now = now_ms()
-        for t in sorted(trades, key=lambda x: x.hour_open_ms):
-            if t.status != 'PENDING':
-                continue
-            H = t.hour_open_ms + H1
-            if self.s.entry == 'bar_open':
-                f = db_candles(self.db, '5m', H, H + M5)
+        for t in trades:                                   # giá tham chiếu của limit = open nến mở lúc quyết định
+            if t.status == 'PENDING' and 'ref' not in t.extra:
+                f = db_candles(self.db, '5m', t.decision_ms, t.decision_ms + M5)
                 if len(f):
-                    book.fill(t, H, float(f['open'].iloc[0]), entry_ref=float(f['open'].iloc[0]))
-            else:
-                after = int(t.extra.get('decided_ms', now))
-                first_min = after - after % M1 + (M1 if after % M1 else 0)
-                f = db_candles(self.db, '1m', first_min, first_min + M1)
-                ref = db_candles(self.db, '5m', H, H + M5)
-                ref1 = db_candles(self.db, '1m', H, H + M1)
-                entry_ref = (float(ref['open'].iloc[0]) if len(ref) else
-                             float(ref1['open'].iloc[0]) if len(ref1) else None)
-                if len(f):
-                    book.fill(t, first_min, float(f['open'].iloc[0]), entry_ref=entry_ref)
-                elif now - first_min > 30 * M1:                # không có nến 1m sau 30 phút -> huỷ
-                    t.status = 'CANCELLED'
-                    t.extra['cancel_reason'] = 'no 1m candle after decision'
-            if t.status in ('OPEN', 'CANCELLED'):
-                save_trade(self.db, t, self.s.source)
-                filled += t.status == 'OPEN'
-        live = [t for t in trades if t.status == 'OPEN']
-        if live:
-            def resume(t):
-                lv = t.last_bar_ms + M1 if t.last_bar_ms is not None else t.entry_ms
-                an = t.extra.get('last_anomaly_ms')
-                an = an + M5 if an is not None else t.entry_ms - t.entry_ms % M5
-                return min(lv, an)
-            start = min(resume(t) for t in live)
-            for bar in bars_for(self.db, start, now, self.rest):
-                for t in book.on_bar(bar):
-                    closed += 1
-                    with self.db.transaction():
-                        save_trade(self.db, t, self.s.source)
-                        set_state(self.db, self.s.source, book.equity, book.last_entry_hour_ms)
-                    log.info('strategy-h1 trade %s %s R=%.3f equity=%.4f', t.trade_id[:10], t.status, t.r_net,
-                             book.equity)
-            for t in live:
-                if t.status == 'OPEN':
-                    save_trade(self.db, t, self.s.source)      # lưu tiến độ (last_bar_ms)
-        return {'open': sum(t.status in ('OPEN', 'PENDING') for t in trades), 'filled': filled, 'closed': closed,
-                'equity': book.equity}
+                    t.extra['ref'] = float(f['open'].iloc[0])
+
+        def resume(t):
+            if t.status == 'PENDING':
+                last = t.extra.get('last_pending_ms')
+                return max(int(t.extra.get('start_ms', t.decision_ms)), last + M1 if last is not None else 0)
+            return t.last_bar_ms + M1 if t.last_bar_ms is not None else t.entry_ms
+
+        filled = closed = 0
+        for bar in bars_for(self.db, min(resume(t) for t in trades), now, self.rest, fine=self.s.fill_bars == '1m'):
+            f, c = book.on_bar(bar)
+            for t in f:
+                if t not in c:
+                    save_trade(self.db, t, self.s.source)
+                filled += 1
+            for t in c:
+                closed += 1
+                with self.db.transaction():
+                    save_trade(self.db, t, self.s.source)
+                    set_state(self.db, self.s.source, book.equity, book.last_entry_hour_ms)
+                log.info('strategy-h1 trade %s %s R=%.3f equity=%.4f', t.trade_id[:10], t.status, t.r_net, book.equity)
+        for t in trades:
+            if t.status == 'PENDING' and now - t.decision_ms > 60 * M1:      # không có nến để khớp sau 1 giờ -> huỷ
+                t.status = 'CANCELLED'
+                t.extra['cancel_reason'] = 'no candle to fill after decision'
+            if t.is_open or t.status == 'CANCELLED':
+                save_trade(self.db, t, self.s.source)          # lưu tiến độ (last_bar_ms / last_pending_ms)
+        return {'open': sum(t.is_open for t in trades), 'filled': filled, 'closed': closed, 'equity': book.equity}
 
 
 def strategy_worker(once: bool = False):
     settings = Settings()
     with connect() as db:
         strat = Strategy(db, settings)
-        log.info('strategy-h1: bundle=%s fold=%s entry=%s params=%s', settings.bundle_path,
-                 strat.bundle.get('trained_fold'), settings.entry, strat.params)
+        log.info('strategy-h1: bundle=%s quarter=%s data_end=%s blend=%s fill_bars=%s params=%s', settings.bundle_path,
+                 strat.bundle.get('trained_quarter'), pd.to_datetime(strat.bundle.get('data_end_ns'), utc=True),
+                 strat.bundle.get('direction_blend'), settings.fill_bars, strat.params)
         while True:
             try:
                 made = []

@@ -15,14 +15,14 @@ def trade(side=1, status='OPEN', r=None):
     b = 0.012
     return {'trade_id': 'tr1', 'signal_id': 'sig1', 'hour_open_ms': T0, 'side': side, 'b_pct': b,
             'status': status, 'entry_ms': T0 + H1 + 120_000, 'entry': e,
-            'tp': e * (1 + side * b), 'sl': e * (1 - side * 0.75 * b),
+            'tp': e * (1 + side * b), 'sl': e * (1 - side * b),
             'exit_price': e * (1 + side * b) if status == 'TP' else None,
             'exit_close_ms': T0 + 5 * H1, 'r_gross': r, 'r_net': None if r is None else r - 0.111,
-            'equity_after': 1.0123, 'state': {'slippage_r': -0.02},
-            'params': {'fee_pct': 0.001, 'sl_mult': 0.75, 'anomaly_range': 0.0075, 'max_hold_h': 720}}
+            'equity_after': 1.0123, 'state': {'slippage_r': -0.02, 'maker': True},
+            'params': {'fee_maker': 0.0002, 'fee_taker': 0.0005, 'sl_mult': 1.0, 'max_hold_h': 9}}
 
 
-EV = {'source': 'strategy_h1', 'hour_open_ms': T0,
+EV = {'source': 'strategy_h1_v2', 'hour_open_ms': T0,
       'signal': {'p_touch': 0.71, 'p_up': 0.62, 'conf': 0.12},
       'decision': {'good': True, 'side': 'LONG', 'admitted': False, 'skip_reason': 'max_positions'}}
 
@@ -33,7 +33,9 @@ class FormatTests(unittest.TestCase):
         self.assertIn('LONG BTCUSDT', text)
         self.assertIn('60,000.0', text)
         self.assertIn('+1.20%', text)                 # TP = 1b
-        self.assertIn('-0.90%', text)                 # SL = 0.75b
+        self.assertIn('-1.20%', text)                 # SL = 1b
+        self.assertIn('giữ tối đa 9h', text)
+        self.assertIn('limit (maker)', text)
         self.assertIn('p_touch 0.71', text)
         self.assertIn('3 lệnh đang mở', text)
         self.assertIn('×1.050', text)
@@ -42,7 +44,7 @@ class FormatTests(unittest.TestCase):
         text = format_open(trade(side=-1), EV, 7)
         self.assertIn('SHORT', text)
         self.assertIn('-1.20%', text)
-        self.assertIn('+0.90%', text)
+        self.assertIn('+1.20%', text)
 
     def test_close_message(self):
         text = format_close(trade(status='TP', r=1.3333), 7)

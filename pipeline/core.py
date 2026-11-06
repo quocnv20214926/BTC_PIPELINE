@@ -8,7 +8,7 @@ from decimal import Decimal
 # cùng đơn vị này để tránh trộn lẫn giây và mili-giây khi căn chỉnh dữ liệu.
 INTERVALS = {'1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000}
 # Nguồn tín hiệu của chiến lược H1 (signal_events.source, strategy_trades.source).
-STRATEGY_SOURCE = 'strategy_h1'
+STRATEGY_SOURCE = 'strategy_h1_v2'
 # Binance Futures chỉ công bố các chuỗi global long/short và taker buy/sell
 # từ period 5m trở lên. Vì vậy 1m chỉ có dữ liệu kline (kline vẫn chứa sẵn
 # taker-buy volume), còn các timeframe khác giữ nguyên bộ ba nguồn trước đây.
